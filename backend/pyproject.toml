@@ -1,0 +1,39 @@
+[project]
+name = "backend"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.95.0",
+    "pydantic-settings>=2.0.0",
+    "pydantic>=1.10.7",
+    "uvicorn>=0.21.1",
+    "python-multipart>=0.0.6",
+    "email-validator>=2.0.0",
+    "supabase>=1.0.0",
+    "postgrest>=0.10.6",
+    "psycopg2-binary>=2.9.6",
+    "python-jose>=3.3.0",
+    "passlib>=1.7.4",
+    "bcrypt>=4.0.1",
+    "cryptography>=40.0.1",
+    "langchain>=0.0.267",
+    "langgraph>=0.0.20",
+    "pydantic-ai>=0.0.52",
+    "openai>=1.0.0",
+    "tiktoken>=0.4.0",
+    "numpy>=1.24.2",
+    "pandas>=2.0.0",
+    "scikit-learn>=1.2.2",
+    "httpx>=0.24.0",
+    "plaid-python>=11.3.0",
+    "twilio>=8.0.0",
+    "sendgrid>=6.9.7",
+    "pytest>=7.3.1",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.3.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.2.0",
+]
