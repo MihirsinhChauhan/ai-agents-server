@@ -7,7 +7,7 @@ from app.models.debt import Debt
 from app.models.repayment_plan import RepaymentPlanCreate
 from app.agents.debt_analyzer_agent import DebtAnalyzingAgent, DebtAnalysis
 from app.agents.debt_optimizer_agent import DebtOptimizerAgent, RepaymentPlanSummary
-from app.config import settings
+from app.configs.config import settings
 from supabase import create_client
 from uuid import UUID
 
