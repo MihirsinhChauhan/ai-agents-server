@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, TypedDict, Optional
 import json
+from datetime import datetime
 from langgraph.graph import StateGraph, END
 from pydantic import ValidationError
 from uuid import UUID
@@ -8,11 +9,11 @@ from app.configs.config import settings
 from app.models.budget import Budget
 from app.models.transaction import Transaction
 from app.models.financial_goal import FinancialGoal
-from app.agents.budget_tracking_agent.budget_planner_agent import BudgetPlannerAgent, BudgetPlan
-from app.agents.budget_tracking_agent.expense_tracker_agent import ExpenseTrackerAgent, ExpenseTrackingSummary
-from app.agents.budget_tracking_agent.alert_notification_agent import AlertNotificationAgent, AlertNotificationSummary
-from app.agents.budget_tracking_agent.savings_goal_tracker_agent import SavingsGoalTrackerAgent, SavingsGoalTrackingSummary
-from app.agents.budget_tracking_agent.insight_analysis_agent import InsightAnalysisAgent, FinancialInsight
+from .budget_planner_agent import BudgetPlannerAgent, BudgetPlan
+from .expense_tracker_agent import ExpenseTrackerAgent, ExpenseTrackingSummary
+from .alert_notification_agent import AlertNotificationAgent, AlertNotificationSummary
+from .savings_goal_tracker_agent import SavingsGoalTrackerAgent, SavingsGoalTrackingSummary
+from .insight_analysis_agent import InsightAnalysisAgent, FinancialInsight
 
 # Assuming Supabase client is available and configured in app.configs.config
 # from supabase import create_client
@@ -119,8 +120,8 @@ class BudgetTrackingOrchestrator:
         workflow = StateGraph(GraphState)
 
         # Add nodes for each agent
-        workflow.add_node("plan_budget", self._call_budget_planner)
         workflow.add_node("track_expenses", self._call_expense_tracker)
+        workflow.add_node("plan_budget", self._call_budget_planner)
         workflow.add_node("generate_alerts", self._call_alert_notification)
         workflow.add_node("track_savings_goals", self._call_savings_goal_tracker)
         workflow.add_node("analyze_insights", self._call_insight_analysis)
@@ -130,8 +131,8 @@ class BudgetTrackingOrchestrator:
         workflow.set_entry_point("plan_budget") # Start with budget planning or expense tracking based on input
 
         # Example flow: Plan budget -> Track expenses -> Generate alerts -> Track savings -> Analyze insights
-        workflow.add_edge("plan_budget", "track_expenses")
-        workflow.add_edge("track_expenses", "generate_alerts")
+        workflow.add_edge("track_expenses","plan_budget" )
+        workflow.add_edge("plan_budget", "generate_alerts")
         workflow.add_edge("generate_alerts", "track_savings_goals")
         workflow.add_edge("track_savings_goals", "analyze_insights")
         workflow.add_edge("analyze_insights", END)

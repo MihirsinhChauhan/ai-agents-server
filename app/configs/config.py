@@ -37,10 +37,10 @@ class Settings(BaseSettings):
     GROQ_API_KEY: Optional[str] = os.getenv("GROQ_API_KEY", None)
     LLM_BASE_URL: Optional[str] = os.getenv("LLM_BASE_URL", None)  # For custom endpoints (e.g., Ollama)
     
-    # Blockchain Integration
-    BLOCKCHAIN_NODE_URL: str = os.getenv("BLOCKCHAIN_NODE_URL", "http://localhost:8545")
-    BLOCKCHAIN_ENABLED: bool = os.getenv("BLOCKCHAIN_ENABLED", "true").lower() == "true"
-    CONTRACT_ADDRESS: str = os.getenv("CONTRACT_ADDRESS", "")
+    # # Blockchain Integration
+    # BLOCKCHAIN_NODE_URL: str = os.getenv("BLOCKCHAIN_NODE_URL", "http://localhost:8545")
+    # BLOCKCHAIN_ENABLED: bool = os.getenv("BLOCKCHAIN_ENABLED", "true").lower() == "true"
+    # CONTRACT_ADDRESS: str = os.getenv("CONTRACT_ADDRESS", "")
     
     # External API Keys
     PLAID_CLIENT_ID: str = os.getenv("PLAID_CLIENT_ID", "")

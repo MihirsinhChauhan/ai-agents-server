@@ -83,7 +83,7 @@ class ExpenseTrackerAgent:
             - id: string (UUID)
             - amount: float
             - description: string (e.g., "Starbucks Coffee", "Payroll Deposit", "Amazon.com")
-            - date: string (ISO format)
+            - date: string (ISO format or any date format)
             - type: string (e.g., "debit", "credit", "expense", "income")
         - available_categories: List of strings representing predefined categories (e.g., ["Groceries", "Utilities", "Transportation", "Dining Out", "Salary", "Rent", "Shopping", "Entertainment", "Healthcare", "Education", "Miscellaneous"])
 
@@ -107,12 +107,12 @@ class ExpenseTrackerAgent:
                     "type": str,
                     "category": str,
                     "description": str,
-                    "date": str
+                    "date": str (MUST be in ISO format like "2025-06-07T00:00:00.000Z" or "2025-06-07T00:00:00+00:00")
                 }
             ],
             "spending_by_category": {"category_name": float},
             "uncategorized_transactions_count": int,
-            "tracking_timestamp": "string (ISO datetime)",
+            "tracking_timestamp": "string (ISO datetime with timezone like 2025-08-11T01:27:40.386675+00:00)",
             "insights": [str]
         }
 
@@ -121,6 +121,7 @@ class ExpenseTrackerAgent:
         -   Prioritize accurate categorization. If unsure, use "Uncategorized".
         -   Ensure all input transactions are present in `categorized_transactions`.
         -   The `type` field in `CategorizedTransaction` should be either 'expense' or 'income'. Convert 'debit' to 'expense' and 'credit' to 'income'.
+        -   CRITICAL: Ensure all dates in the output are in proper ISO datetime format with timezone (e.g., "2025-06-07T00:00:00+00:00" or "2025-06-07T00:00:00.000Z"). If input date is "2025-06-07 00:00:00", convert it to "2025-06-07T00:00:00+00:00".
         """
     
     def track_expenses(self, user_id: str, transactions: List[Dict[str, Any]], available_categories: List[str]) -> ExpenseTrackingSummary:

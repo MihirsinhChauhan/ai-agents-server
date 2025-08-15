@@ -1,0 +1,141 @@
+[
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174001",
+        "name": "Visa Credit Card",
+        "type": "credit_card",
+        "amount": 7500.0,
+        "interest_rate": 18.99,
+        "minimum_payment": 225.0,
+        "payment_frequency": "monthly",
+        "source": "manual",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": "2025-04-15",
+        "details": {
+            "card_issuer": "Visa",
+            "last_four_digits": "1234"
+        },
+        "created_at": "2024-01-10T00:00:00",
+        "updated_at": "2025-03-15T00:00:00",
+        "blockchain_id": null,
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174002",
+        "name": "Federal Student Loan",
+        "type": "student_loan",
+        "amount": 35000.0,
+        "interest_rate": 5.5,
+        "minimum_payment": 400.0,
+        "payment_frequency": "monthly",
+        "source": "plaid",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": "2025-04-01",
+        "details": {
+            "servicer": "Navient",
+            "loan_type": "Direct Subsidized"
+        },
+        "created_at": "2023-06-01T00:00:00",
+        "updated_at": "2025-04-01T00:00:00",
+        "blockchain_id": "0xabc123",
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174003",
+        "name": "Car Loan",
+        "type": "auto_loan",
+        "amount": 18000.0,
+        "interest_rate": 7.2,
+        "minimum_payment": null,
+        "payment_frequency": "bi_weekly",
+        "source": "manual",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": "2025-04-10",
+        "details": {
+            "vehicle": "Toyota Camry 2022",
+            "lender": "Local Credit Union"
+        },
+        "created_at": "2024-03-15T00:00:00",
+        "updated_at": "2025-04-10T00:00:00",
+        "blockchain_id": null,
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174004",
+        "name": "Medical Bill",
+        "type": "medical",
+        "amount": 2500.0,
+        "interest_rate": 0.0,
+        "minimum_payment": 100.0,
+        "payment_frequency": "monthly",
+        "source": "manual",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": null,
+        "details": {
+            "provider": "City Hospital",
+            "procedure": "Emergency Room Visit"
+        },
+        "created_at": "2025-01-20T00:00:00",
+        "updated_at": "2025-03-20T00:00:00",
+        "blockchain_id": null,
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174005",
+        "name": "Mortgage",
+        "type": "mortgage",
+        "amount": 200000.0,
+        "interest_rate": 4.25,
+        "minimum_payment": 1200.0,
+        "payment_frequency": "monthly",
+        "source": "plaid",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": "2025-04-05",
+        "details": {
+            "property_address": "123 Main St, Anytown, USA",
+            "term_years": 30
+        },
+        "created_at": "2020-11-01T00:00:00",
+        "updated_at": "2025-04-05T00:00:00",
+        "blockchain_id": "0xdef456",
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174006",
+        "name": "Personal Loan",
+        "type": "personal_loan",
+        "amount": 10000.0,
+        "interest_rate": 9.5,
+        "minimum_payment": 250.0,
+        "payment_frequency": "weekly",
+        "source": "manual",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": null,
+        "details": {
+            "purpose": "Home Renovation"
+        },
+        "created_at": "2024-09-01T00:00:00",
+        "updated_at": "2025-04-07T00:00:00",
+        "blockchain_id": null,
+        "is_active": true
+    },
+    {
+        "id": "123e4567-e89b-12d3-a456-426614174007",
+        "name": "Family Loan",
+        "type": "family",
+        "amount": 3000.0,
+        "interest_rate": 0.0,
+        "minimum_payment": null,
+        "payment_frequency": "custom",
+        "source": "manual",
+        "user_id": "123e4567-e89b-12d3-a456-426614174000",
+        "due_date": null,
+        "details": {
+            "lender": "Parents",
+            "agreement": "Pay when able"
+        },
+        "created_at": "2024-12-01T00:00:00",
+        "updated_at": "2025-04-01T00:00:00",
+        "blockchain_id": null,
+        "is_active": true
+    }
+]
