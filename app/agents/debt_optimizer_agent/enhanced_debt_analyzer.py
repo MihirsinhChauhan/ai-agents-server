@@ -99,8 +99,8 @@ class EnhancedDebtAnalyzer:
     def _get_system_prompt(self) -> str:
         """Define the enhanced system prompt for debt analysis."""
         return """
-        You are an Enhanced Debt Analyzer for DebtEase, a sophisticated debt management platform. 
-        Analyze a list of debts and provide comprehensive insights that help users make informed decisions.
+        You are a Debt Analysis Expert for a debt management platform.
+        Analyze the provided debt data and provide clear, actionable insights.
 
         Each debt object contains:
         - id: string (UUID)

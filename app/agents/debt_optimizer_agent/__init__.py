@@ -15,12 +15,13 @@ from .enhanced_debt_optimizer import EnhancedDebtOptimizer, RepaymentPlan
 from .ai_recommendation_agent import AIRecommendationAgent, RecommendationSet
 from .dti_calculator_agent import DTICalculatorAgent, DTIAnalysis
 from .enhanced_orchestrator import EnhancedAIOrchestrator, AIOrchestrationResult
+from .langgraph_orchestrator import LangGraphOrchestrator, WorkflowResult, OrchestrationState
 
 __all__ = [
     # Legacy agents
     'DebtAnalyzerAgent',
     'DebtOptimizerAgent',
-    
+
     # Enhanced Pydantic AI agents
     'EnhancedDebtAnalyzer',
     'DebtAnalysisResult',
@@ -32,4 +33,9 @@ __all__ = [
     'DTIAnalysis',
     'EnhancedAIOrchestrator',
     'AIOrchestrationResult',
+
+    # LangGraph Orchestration (NEW)
+    'LangGraphOrchestrator',
+    'WorkflowResult',
+    'OrchestrationState',
 ]
