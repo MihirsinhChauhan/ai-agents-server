@@ -2,7 +2,7 @@ import os
 import sys
 import json
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIModel

@@ -5,8 +5,8 @@ from pydantic import ValidationError
 
 from app.models.debt import Debt
 from app.models.repayment_plan import RepaymentPlanCreate
-from app.agents.debt_analyzer_agent import DebtAnalyzingAgent, DebtAnalysis
-from app.agents.debt_optimizer_agent import DebtOptimizerAgent, RepaymentPlanSummary
+from .debt_analyzer_agent import DebtAnalyzingAgent, DebtAnalysis
+from .debt_optimizer_agent import DebtOptimizerAgent, RepaymentPlanSummary
 from app.configs.config import settings
 from supabase import create_client
 from uuid import UUID
