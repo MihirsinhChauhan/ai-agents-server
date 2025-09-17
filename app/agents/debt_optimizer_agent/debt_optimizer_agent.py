@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.configs.config import settings
 from app.models.debt import Debt
-from app.agents.debt_analyzer_agent import DebtAnalysis
+from .debt_analyzer_agent import DebtAnalysis
 
 class OptimizationStrategy(BaseModel):
     """Debt repayment strategy recommendation."""

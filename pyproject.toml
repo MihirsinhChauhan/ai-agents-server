@@ -1,39 +1,113 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "backend"
+name = "ai-agents-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "AI-powered financial agents server for debt management and budget tracking"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.11"
+authors = [
+    { name = "DebtEase Team", email = "team@debtease.com" },
+]
+keywords = ["ai", "finance", "debt", "budget", "agents", "langchain", "pydantic"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business :: Financial",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# Core dependencies
 dependencies = [
-    "fastapi>=0.95.0",
-    "pydantic-settings>=2.0.0",
-    "pydantic>=1.10.7",
-    "uvicorn>=0.21.1",
+    # Web Framework
+    "fastapi>=0.104.0",
+    "uvicorn[standard]>=0.24.0",
     "python-multipart>=0.0.6",
-    "email-validator>=2.0.0",
-    "supabase>=1.0.0",
-    "postgrest>=0.10.6",
-    "psycopg2-binary>=2.9.6",
-    "python-jose>=3.3.0",
-    "passlib>=1.7.4",
-    "bcrypt>=4.0.1",
-    "cryptography>=40.0.1",
-    "langchain>=0.0.267",
+    
+    # Data Validation & Settings
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+    "email-validator>=2.1.0",
+    
+    # AI & ML Framework
+    "langchain>=0.1.0",
     "langgraph>=0.0.20",
     "pydantic-ai>=0.0.52",
-    "openai>=1.0.0",
-    "tiktoken>=0.4.0",
-    "numpy>=1.24.2",
-    "pandas>=2.0.0",
-    "scikit-learn>=1.2.2",
-    "httpx>=0.24.0",
+    "openai>=1.3.0",
+    "tiktoken>=0.5.0",
+    
+    # Data Processing
+    "pandas>=2.1.0",
+    "numpy>=1.24.0",
+    "scikit-learn>=1.3.0",
+    
+    # Database & API
+    "postgrest>=0.10.6",
+    "psycopg2-binary>=2.9.7",
+    "httpx>=0.25.0",
+    
+    # External Services
     "plaid-python>=11.3.0",
-    "twilio>=8.0.0",
-    "sendgrid>=6.9.7",
-    "pytest>=7.3.1",
-    "pytest-asyncio>=0.21.0",
-    "black>=23.3.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
-    "mypy>=1.2.0",
+    "twilio>=8.10.0",
+    "sendgrid>=6.10.0",
+    
+    # Utilities
+    "python-dateutil>=2.8.2",
+    "pytz>=2023.3",
+    
+    # Financial statement parsing
+    "pdfplumber>=0.9.0",    # PDF parsing
+    "openpyxl>=3.1.0",      # Excel parsing (.xlsx)
+    "xlrd>=2.0.1",          # Excel parsing (.xls)
+    "chardet>=5.2.0",       # Encoding detection
+    "PyPDF2>=3.0.0",        # Alternative PDF parser
 ]
+
+# Optional dependencies for enhanced functionality
+[project.optional-dependencies]
+# Additional AI providers
+ai-providers = [
+    "anthropic>=0.8.0",     # Claude AI
+    "groq>=0.4.0",          # Groq API
+    "ollama>=0.1.0",        # Local Ollama
+    "google-generativeai>=0.3.0",  # Gemini AI
+]
+
+# Development tools
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "pytest-mock>=3.12.0",
+    "black>=23.9.0",
+    "isort>=5.12.0",
+    "flake8>=6.1.0",
+    "mypy>=1.6.0",
+    "pre-commit>=3.5.0",
+    "bandit>=1.7.5",
+]
+
+# Production deployment
+prod = [
+    "gunicorn>=21.2.0",
+    "prometheus-client>=0.19.0",
+    "structlog>=23.2.0",
+]
+
+# All optional dependencies
+all = [
+    "ai-agents-server[ai-providers,dev,prod]"
+]
+
+# Package discovery
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.hatch.build.targets.sdist]
+packages = ["app"]
