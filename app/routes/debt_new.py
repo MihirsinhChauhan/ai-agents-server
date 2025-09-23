@@ -13,14 +13,15 @@ from app.repositories.debt_repository import DebtRepository
 from app.repositories.payment_repository import PaymentRepository
 from app.repositories.analytics_repository import AnalyticsRepository
 from app.models.debt import (
-    DebtResponse, DebtCreate, DebtUpdate, DebtType, PaymentFrequency
+    DebtResponse, DebtCreate, DebtCreateRequest, DebtUpdate, DebtType, PaymentFrequency
 )
 from app.models.payment import (
     PaymentHistoryResponse, PaymentCreate, PaymentStatus
 )
-from app.models.analytics import DebtSummaryResponse
-from app.middleware.auth import CurrentUser, require_authentication
+from app.models.analytics import DebtSummaryResponse as AnalyticsDebtSummaryResponse
+from app.middleware.auth import CurrentUser
 from app.utils.auth import AuthUtils
+from app.services.ai_service import AIService
 
 router = APIRouter()
 
@@ -43,15 +44,6 @@ class PaymentRecordResponse(BaseModel):
     message: str = Field(..., description="Success message")
 
 
-class DebtSummaryResponse(BaseModel):
-    """Enhanced debt summary for dashboard"""
-    total_debt: float = Field(..., description="Total debt across all accounts")
-    total_monthly_payments: float = Field(..., description="Total monthly minimum payments")
-    average_interest_rate: float = Field(..., description="Average interest rate across debts")
-    debt_count: int = Field(..., description="Total number of active debts")
-    high_priority_count: int = Field(..., description="Number of high priority debts")
-    upcoming_payments_count: int = Field(..., description="Number of payments due in next 7 days")
-    debts: List[DebtResponse] = Field(..., description="All active debts")
 
 
 @router.get("/", response_model=List[DebtResponse])
@@ -73,9 +65,7 @@ async def get_user_debts(
         # Get user debts with filtering
         debts = await debt_repo.get_user_debts(
             user_id=current_user.id,
-            is_active=active_only,
-            sort_by=sort_by,
-            sort_order=sort_order
+            include_inactive=not active_only
         )
 
         # Apply additional filters
@@ -84,6 +74,24 @@ async def get_user_debts(
 
         if high_priority_only:
             debts = [d for d in debts if d.is_high_priority]
+
+        # Apply sorting
+        def get_sort_key(debt):
+            if sort_by == "name":
+                return debt.name.lower() if debt.name else ""
+            elif sort_by == "debt_type":
+                return debt.debt_type.value if debt.debt_type else ""
+            elif sort_by == "current_balance":
+                return debt.current_balance or 0
+            elif sort_by == "interest_rate":
+                return debt.interest_rate or 0
+            elif sort_by == "due_date":
+                return debt.due_date or date.max
+            else:
+                return debt.due_date or date.max
+
+        reverse_order = sort_order.upper() == "DESC"
+        debts.sort(key=get_sort_key, reverse=reverse_order)
 
         # Convert to frontend-compatible response format
         debt_responses = [DebtResponse.from_debt_in_db(debt) for debt in debts]
@@ -99,7 +107,7 @@ async def get_user_debts(
 
 @router.post("/", response_model=DebtResponse, status_code=status.HTTP_201_CREATED)
 async def create_debt(
-    debt_data: DebtCreate,
+    debt_request: DebtCreateRequest,
     current_user: CurrentUser
 ) -> DebtResponse:
     """
@@ -109,12 +117,24 @@ async def create_debt(
     debt_repo = DebtRepository()
 
     try:
-        # Validate user authorization (debt_data should include user_id)
-        if debt_data.user_id != current_user.id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Cannot create debt for another user"
-            )
+        # Create DebtCreate model with user_id from authenticated user
+        debt_data = DebtCreate(
+            user_id=current_user.id,
+            name=debt_request.name,
+            debt_type=debt_request.debt_type,
+            principal_amount=debt_request.principal_amount,
+            current_balance=debt_request.current_balance,
+            interest_rate=debt_request.interest_rate,
+            is_variable_rate=debt_request.is_variable_rate,
+            minimum_payment=debt_request.minimum_payment,
+            due_date=debt_request.due_date,
+            lender=debt_request.lender,
+            remaining_term_months=debt_request.remaining_term_months,
+            is_tax_deductible=debt_request.is_tax_deductible,
+            payment_frequency=debt_request.payment_frequency,
+            is_high_priority=debt_request.is_high_priority,
+            notes=debt_request.notes
+        )
 
         # Create the debt
         new_debt = await debt_repo.create_debt(debt_data)
@@ -125,6 +145,14 @@ async def create_debt(
                 detail="Failed to create debt"
             )
 
+        # Invalidate AI cache since debt data changed
+        try:
+            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
+            ai_service.invalidate_user_cache(current_user.id)
+        except Exception:
+            # Don't fail the debt creation if cache invalidation fails
+            pass
+
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(new_debt)
 
@@ -134,6 +162,52 @@ async def create_debt(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create debt: {str(e)}"
+        )
+
+
+@router.get("/summary", response_model=AnalyticsDebtSummaryResponse)
+async def get_debt_summary(
+    current_user: CurrentUser
+) -> AnalyticsDebtSummaryResponse:
+    """
+    Get comprehensive debt summary for dashboard.
+    Includes totals, averages, and upcoming payments.
+    """
+    debt_repo = DebtRepository()
+
+    try:
+        # Get debt summary data - this returns a DebtSummaryResponse object, not a dict
+        summary_data = await debt_repo.get_debt_summary(current_user.id)
+
+        # Get all active debts to calculate upcoming payments
+        debts = await debt_repo.get_user_debts(
+            user_id=current_user.id,
+            include_inactive=False
+        )
+
+        # Calculate upcoming payments (due in next 7 days)
+        today = date.today()
+        next_week = today + timedelta(days=7)
+        upcoming_payments_count = sum(
+            1 for debt in debts
+            if debt.due_date and today <= debt.due_date <= next_week
+        )
+
+        # Use attribute access instead of dict access since summary_data is a DebtSummaryResponse object
+        return AnalyticsDebtSummaryResponse(
+            total_debt=summary_data.total_debt,
+            total_interest_paid=0.0,  # TODO: Calculate actual interest paid from payment history
+            total_minimum_payments=summary_data.total_minimum_payments,
+            average_interest_rate=summary_data.average_interest_rate,
+            debt_count=summary_data.debt_count,
+            high_priority_count=summary_data.high_priority_count,
+            upcomingPaymentsCount=upcoming_payments_count  # Use camelCase to match frontend
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get debt summary: {str(e)}"
         )
 
 
@@ -221,6 +295,14 @@ async def update_debt(
                 detail="Failed to update debt"
             )
 
+        # Invalidate AI cache since debt data changed
+        try:
+            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
+            ai_service.invalidate_user_cache(current_user.id)
+        except Exception:
+            # Don't fail the debt update if cache invalidation fails
+            pass
+
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(updated_debt)
 
@@ -268,6 +350,14 @@ async def delete_debt(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to delete debt"
             )
+
+        # Invalidate AI cache since debt data changed
+        try:
+            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
+            ai_service.invalidate_user_cache(current_user.id)
+        except Exception:
+            # Don't fail the debt deletion if cache invalidation fails
+            pass
 
     except HTTPException:
         raise
@@ -349,6 +439,14 @@ async def record_payment(
             payment, updated_debt, debt.current_balance
         )
 
+        # Invalidate AI cache since debt balance changed
+        try:
+            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
+            ai_service.invalidate_user_cache(current_user.id)
+        except Exception:
+            # Don't fail the payment recording if cache invalidation fails
+            pass
+
         # Convert to frontend-compatible responses
         payment_response = PaymentHistoryResponse.from_payment_in_db(payment)
         debt_response = DebtResponse.from_debt_in_db(updated_debt)
@@ -369,55 +467,6 @@ async def record_payment(
         )
 
 
-@router.get("/summary", response_model=DebtSummaryResponse)
-async def get_debt_summary(
-    current_user: CurrentUser
-) -> DebtSummaryResponse:
-    """
-    Get comprehensive debt summary for dashboard.
-    Includes totals, averages, and upcoming payments.
-    """
-    debt_repo = DebtRepository()
-
-    try:
-        # Get debt summary data
-        summary_data = await debt_repo.get_debt_summary(current_user.id)
-
-        # Get all active debts for the response
-        debts = await debt_repo.get_user_debts(
-            user_id=current_user.id,
-            is_active=True,
-            sort_by="due_date"
-        )
-
-        # Calculate upcoming payments (due in next 7 days)
-        today = date.today()
-        next_week = today + timedelta(days=7)
-        upcoming_payments_count = sum(
-            1 for debt in debts
-            if debt.due_date and today <= debt.due_date <= next_week
-        )
-
-        # Convert debts to frontend-compatible format
-        debt_responses = [DebtResponse.from_debt_in_db(debt) for debt in debts]
-
-        return DebtSummaryResponse(
-            total_debt=summary_data["total_debt"],
-            total_monthly_payments=summary_data["total_monthly_payments"],
-            average_interest_rate=summary_data["average_interest_rate"],
-            debt_count=summary_data["debt_count"],
-            high_priority_count=summary_data["high_priority_count"],
-            upcoming_payments_count=upcoming_payments_count,
-            debts=debt_responses
-        )
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get debt summary: {str(e)}"
-        )
-
-
 @router.get("/reminders", response_model=List[Dict[str, Any]])
 async def get_payment_reminders(
     current_user: CurrentUser,
@@ -430,7 +479,7 @@ async def get_payment_reminders(
 
     try:
         # Get active debts
-        debts = await debt_repo.get_user_debts(current_user.id, is_active=True)
+        debts = await debt_repo.get_user_debts(current_user.id, include_inactive=False)
 
         # Find debts with due dates within the specified period
         today = date.today()

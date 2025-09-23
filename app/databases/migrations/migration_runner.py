@@ -162,3 +162,6 @@ async def init_database_schema():
 if __name__ == "__main__":
     # Allow running migrations directly
     asyncio.run(init_database_schema())
+
+
+

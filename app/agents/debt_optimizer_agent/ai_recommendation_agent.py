@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from app.configs.config import settings
 from app.models.debt import DebtInDB, DebtResponse
+from app.models.onboarding import UserGoalResponse
 from .enhanced_debt_analyzer import DebtAnalysisResult
 
 
@@ -94,14 +95,14 @@ class AIRecommendationAgent:
         """Initialize the AI recommendation agent with robust fallback strategies."""
         self.model = self._initialize_model()
 
-        # Original agent for backward compatibility
+        # Main agent configured for text generation (no function calling)
         self.agent = Agent(
             model=self.model,
             instructions=self._get_system_prompt(),
-            output_type=RecommendationSetInternal
+            output_type=str  # Use string output to avoid function calling
         )
 
-        # NEW: Simplified agent for reliable AI processing
+        # Simplified agent for fallback scenarios
         self.simple_agent = Agent(
             model=self.model,
             instructions=self._get_simple_prompt(),
@@ -168,125 +169,92 @@ class AIRecommendationAgent:
             raise ValueError(f"Unsupported LLM provider: {settings.LLM_PROVIDER}")
     
     def _get_system_prompt(self) -> str:
-        """Define the system prompt for AI recommendations."""
+        """Define the professional Indian debt consultant system prompt for AI recommendations."""
         return """
-        You are an AI Financial Advisor for DebtEase, specializing in personalized debt management recommendations.
-        Generate 3-5 actionable recommendations based on debt analysis and user financial situation.
+        You are a Professional Debt Consultant for DebtEase India specializing in Indian financial systems.
 
-        Input Data:
-        - **debts**: Array of user's debt objects with complete financial details
-        - **analysis**: DebtAnalysisResult with comprehensive debt insights
-        - **user_profile**: Optional user information (income, preferences, etc.)
+        **CRITICAL: ALL AMOUNTS IN INDIAN RUPEES (₹). Never use USD ($).**
 
-        Generate recommendations covering these areas:
+        **INDIAN CONTEXT:**
+        - Banks: HDFC, ICICI, SBI, Axis (rates 8-45%)
+        - Payments: UPI auto-pay, NEFT, EMI alignment with salary
+        - Credit: CIBIL score optimization (target 750+)
+        - Culture: Diwali goals, family planning, festival bonuses
+        - Tax: 80C benefits, home loan deductions
 
-        1. **Debt Strategy Recommendations**:
-           - Avalanche strategy for high-interest debts (>12% APR)
-           - Snowball strategy for motivation and quick wins
-           - Hybrid approaches for mixed debt portfolios
+        **STRATEGY FRAMEWORK:**
+        1. **आपातकाल (Emergency)**: ₹25K-75K fund in high-yield savings first
+        2. **हिमस्खलन (Avalanche)**: Target credit cards 40%+ rates
+        3. **स्नोबॉल (Snowball)**: Small debts for family motivation
+        4. **समेकन (Consolidation)**: Personal loan 10-14% vs multiple debts
+        5. **स्वचालन (Automation)**: UPI setup, payment optimization
 
-        2. **Refinancing & Consolidation**:
-           - Credit card balance transfers for high-interest cards
-           - Personal loan consolidation for multiple debts
-           - Student loan refinancing opportunities
-           - Home equity options for homeowners
+        **IMPLEMENTATION PHASES:**
+        - Foundation (Weeks 1-4): Emergency fund, CIBIL check, banking setup
+        - Attack (Months 2-6): Debt elimination, bonus utilization
+        - Optimization (6+ months): Refinancing, investment transition
+        RESPOND WITH ONLY VALID JSON. NO TEXT BEFORE OR AFTER. NO EXPLANATIONS.
 
-        3. **Payment Optimization**:
-           - Increase payment frequency (bi-weekly vs monthly)
-           - Automate payments for interest rate discounts
-           - Round-up payment strategies
-           - Windfall allocation strategies
+        {
+          "recommendations": [
+            {
+              "recommendation_type": "emergency_fund|avalanche|snowball|consolidation|automation|cibil_building",
+              "title": "Action-oriented title (max 60 chars)",
+              "description": "Detailed guidance with Indian context, ₹ amounts (150-250 words)",
+              "priority_score": 8,
+              "potential_savings": 25000,
+              "action_steps": [
+                "Week 1: Specific step with Indian banking details",
+                "Week 2: Implementation with ₹ amounts",
+                "Month 2: Progress milestone"
+              ],
+              "timeline": "Foundation Phase (1-4 weeks)",
+              "benefits": ["Interest savings ₹X", "CIBIL improvement"],
+              "risks": ["Income volatility", "Festival expenses"],
+              "prerequisites": ["CIBIL 650+", "Salary account"]
+            }
+          ]
+        }
 
-        4. **Interest Rate Reduction**:
-           - Negotiate with lenders for rate reductions
-           - Take advantage of promotional rates
-           - Improve credit score for better rates
-           - Consider secured debt options
-
-        5. **Behavioral & Psychological**:
-           - Debt tracking and monitoring systems
-           - Emergency fund building to avoid new debt
-           - Spending habit modifications
-           - Motivation and milestone celebration
-
-        For each recommendation, provide:
-
-        **recommendation_type**: Choose from:
-        - "avalanche": High-interest first strategy
-        - "snowball": Small balance first strategy  
-        - "refinance": Rate reduction through refinancing
-        - "consolidation": Combining multiple debts
-        - "automation": Payment automation strategies
-        - "negotiation": Rate negotiation with lenders
-        - "behavioral": Habit and mindset changes
-
-        **priority_score**: 1-10 based on:
-        - Potential savings impact (1-4 points)
-        - Implementation difficulty (1-3 points, easier = higher score)
-        - User's financial situation urgency (1-3 points)
-
-        **potential_savings**: Calculate realistic annual savings where applicable:
-        - Interest savings from rate reductions
-        - Time savings from faster payoff
-        - Fee savings from consolidation
-
-        **action_steps**: Provide 3-5 specific, actionable steps:
-        - "Contact [lender] to request rate reduction"
-        - "Research balance transfer cards with 0% intro APR"
-        - "Set up automatic payment for 0.25% rate discount"
-
-        **timeline**: Suggest realistic implementation timeframe:
-        - "Immediate" (within 1 week)
-        - "Short-term" (1-4 weeks)
-        - "Medium-term" (1-3 months)
-        - "Long-term" (3+ months)
-
-        **difficulty**: Assess implementation complexity:
-        - "easy": Simple online actions, no credit requirements
-        - "medium": Some research needed, moderate credit requirements
-        - "hard": Extensive research, excellent credit needed, complex process
-
-        **Overall Strategy**: Recommend primary approach:
-        - Focus on highest-impact recommendations first
-        - Balance quick wins with long-term optimization
-        - Consider user's psychological and financial capacity
-
-        **Priority Order**: Rank recommendations by implementation order:
-        - Start with easy, high-impact items
-        - Build momentum with early wins
-        - Progress to more complex optimizations
-
-        Generate comprehensive, personalized recommendations that users can actually implement.
-        Be specific with numbers, timelines, and action steps.
-        Consider both financial and psychological factors in debt management.
+        Include specific Indian bank names (HDFC/ICICI/SBI), ₹ amounts, CIBIL optimization, UPI setup, and Diwali goals.
         """
 
     def _get_simple_prompt(self) -> str:
-        """Simplified prompt that avoids function calling triggers."""
-        return """You are a debt advisor. Analyze the provided debt data and provide 3-5 specific recommendations.
+        """Professional Indian debt consultant simplified prompt with cultural context."""
+        return """You are a Debt Consultant for DebtEase India.
 
-Return ONLY valid JSON in this exact format:
+**CRITICAL: Use Indian Rupees (₹) only, never USD ($).**
+
+**Indian Context:**
+- Banks: HDFC, ICICI, SBI, Axis
+- CIBIL: Target 750+ score
+- Culture: Diwali goals, family planning
+- Payments: UPI, NEFT, EMI alignment
+
+**Strategies:**
+1. आपातकाल (Emergency): ₹25K-75K fund first
+2. हिमस्खलन (Avalanche): Target 40%+ credit cards
+3. स्नोबॉल (Snowball): Small debts for motivation
+4. समेकन (Consolidation): Personal loan 10-14%
+
+RESPOND WITH ONLY VALID JSON. NO EXPLANATIONS. NO MARKDOWN. NO TEXT BEFORE OR AFTER JSON.
+
 {
   "recommendations": [
     {
-      "recommendation_type": "avalanche|snowball|refinance|consolidation|automation",
-      "title": "Brief title here",
-      "description": "Specific actionable description",
+      "recommendation_type": "emergency_fund|avalanche|snowball|consolidation|automation",
+      "title": "Title (max 60 chars)",
+      "description": "Detailed guidance with ₹ amounts and Indian context (150-200 words)",
+      "potential_savings": 25000,
       "priority_score": 8,
-      "action_steps": ["Step 1", "Step 2"],
-      "timeline": "Short-term"
+      "action_steps": ["Step 1", "Step 2", "Step 3"],
+      "timeline": "Foundation Phase (1-4 weeks)",
+      "benefits": ["Interest savings ₹X", "CIBIL improvement"],
+      "risks": ["Income volatility", "Festival expenses"],
+      "prerequisites": ["CIBIL 650+", "Salary account"]
     }
-  ],
-  "overall_strategy": "balanced_approach"
-}
-
-Focus on:
-- High-interest debts (>15% APR)
-- Payment consolidation opportunities
-- Payment automation benefits
-- Debt snowball vs avalanche strategies
-
-Be concise and actionable."""
+  ]
+}"""
 
     async def generate_recommendations_simple_string(self, debts: List[DebtInDB], analysis: DebtAnalysisResult) -> RecommendationSet:
         """Strategy 2: Simple string output approach for reliability."""
@@ -319,61 +287,111 @@ Be concise and actionable."""
             raise
 
     def generate_recommendations_calculation_fallback(self, debts: List[DebtInDB], analysis: DebtAnalysisResult) -> RecommendationSet:
-        """Strategy 3: Pure calculation fallback (always works)."""
+        """Strategy 3: Pure calculation fallback with Indian financial context (always works)."""
         self.fallback_stats["calculation_fallbacks"] += 1
 
         recommendations = []
         user_id = str(debts[0].user_id) if debts else "unknown"
 
-        # Rule-based recommendations
+        # Rule-based recommendations with Indian context
         if debts:
-            # High-interest debt focus
+            total_debt = sum(d.current_balance for d in debts)
+
+            # Emergency fund foundation (highest priority for Indian users)
+            recommendations.append(AIRecommendation(
+                id=str(uuid4()),
+                user_id=user_id,
+                recommendation_type="emergency_fund",
+                title="आपातकालीन फंड: Build Emergency Foundation First",
+                description=f"Before aggressive debt payments, establish ₹{min(75000, total_debt * 0.1):,.0f} emergency fund in high-yield savings account (SBI/HDFC/ICICI). This prevents new debt during medical emergencies or job loss, which is critical for Indian families.",
+                priority_score=9,
+                potential_savings=total_debt * 0.05,  # 5% of total debt saved by avoiding new debt
+                is_dismissed=False,
+                created_at=datetime.now().isoformat()
+            ))
+
+            # High-interest debt focus with Indian banking context
             high_interest = [d for d in debts if d.interest_rate > 15]
             if high_interest:
                 highest = max(high_interest, key=lambda d: d.interest_rate)
+                indian_bank_context = "HDFC" if "hdfc" in highest.name.lower() else "your bank"
                 recommendations.append(AIRecommendation(
                     id=str(uuid4()),
                     user_id=user_id,
                     recommendation_type="avalanche",
-                    title=f"Pay {highest.name} first",
-                    description=f"Your {highest.name} has {highest.interest_rate}% interest - prioritize this to save on interest",
-                    priority_score=9,
-                    potential_savings=highest.current_balance * (highest.interest_rate / 100),
+                    title=f"हिमस्खलन रणनीति: Attack {highest.name} at {highest.interest_rate}%",
+                    description=f"Your {highest.name} at {highest.interest_rate}% interest is costing you ₹{highest.current_balance * (highest.interest_rate / 100) / 12:,.0f} per month. Prioritize this debt while making minimum payments on others. Consider balance transfer to {indian_bank_context} lifetime free cards for lower rates.",
+                    priority_score=8,
+                    potential_savings=highest.current_balance * (highest.interest_rate / 100) * 0.6,  # 60% interest savings
                     is_dismissed=False,
                     created_at=datetime.now().isoformat()
                 ))
 
-            # Consolidation opportunity
+            # Cash flow optimization with Indian lifestyle
+            recommendations.append(AIRecommendation(
+                id=str(uuid4()),
+                user_id=user_id,
+                recommendation_type="cash_flow",
+                title="नकदी प्रवाह सुधार: Optimize Indian Expense Categories",
+                description=f"Audit monthly expenses across Indian categories: groceries (₹8,000), transport (₹3,000), utilities (₹2,500), family support (₹5,000). Reducing dining out by ₹3,000/month adds ₹36,000 annual debt payment capacity. Use festival bonuses and salary increments for debt acceleration.",
+                priority_score=7,
+                potential_savings=36000,  # Annual savings from expense optimization
+                is_dismissed=False,
+                created_at=datetime.now().isoformat()
+            ))
+
+            # Consolidation opportunity with Indian banking products
             if len(debts) > 2:
-                total_balance = sum(d.current_balance for d in debts)
                 recommendations.append(AIRecommendation(
                     id=str(uuid4()),
                     user_id=user_id,
                     recommendation_type="consolidation",
-                    title="Consider debt consolidation",
-                    description=f"You have {len(debts)} debts totaling ${total_balance:,.0f} - consolidation could simplify payments",
-                    priority_score=7,
+                    title="समेकन: Consolidate with Indian Personal Loan",
+                    description=f"You have {len(debts)} debts totaling ₹{total_debt:,.0f}. Consider consolidating with personal loan from SBI/HDFC at 10-12% interest rate versus current weighted average. This simplifies payments and potentially reduces interest burden by ₹{total_debt * 0.08:,.0f} annually.",
+                    priority_score=6,
+                    potential_savings=total_debt * 0.08,  # 8% annual savings
                     is_dismissed=False,
                     created_at=datetime.now().isoformat()
                 ))
 
-        # Always include automation recommendation
+        # CIBIL score building (always relevant for Indian users)
+        recommendations.append(AIRecommendation(
+            id=str(uuid4()),
+            user_id=user_id,
+            recommendation_type="cibil_building",
+            title="सिबिल सुधार: Optimize CIBIL Score for Future Loans",
+            description="Maintain payment history, keep credit utilization below 30%, and avoid closing old credit cards. Target CIBIL score of 750+ to access lowest interest rates (7-9%) for future home loans, saving ₹5-8 lakh over loan tenure compared to poor credit rates.",
+            priority_score=8,
+            potential_savings=500000,  # Long-term savings from better credit
+            is_dismissed=False,
+            created_at=datetime.now().isoformat()
+        ))
+
+        # Indian payment automation
         recommendations.append(AIRecommendation(
             id=str(uuid4()),
             user_id=user_id,
             recommendation_type="automation",
-            title="Set up automatic payments",
-            description="Automate payments to avoid late fees and potentially earn interest rate discounts",
+            title="स्वचालन: Setup Indian Digital Payment Systems",
+            description="Configure UPI auto-pay, NEFT standing instructions, and EMI auto-debit aligned with salary dates. Enable payment reminders through bank apps (HDFC NetBanking, ICICI iMobile). This prevents late fees (₹500-1,500 per instance) and may qualify for interest rate discounts.",
             priority_score=6,
+            potential_savings=12000,  # Annual late fee prevention
             is_dismissed=False,
             created_at=datetime.now().isoformat()
         ))
 
         return RecommendationSet(
             recommendations=recommendations[:5],
-            overall_strategy="balanced_approach",
+            overall_strategy="comprehensive_indian_approach",
             priority_order=list(range(len(recommendations))),
-            estimated_impact={"fallback_used": True, "recommendation_count": len(recommendations)},
+            estimated_impact={
+                "fallback_used": True,
+                "recommendation_count": len(recommendations),
+                "total_potential_savings": sum(r.potential_savings or 0 for r in recommendations),
+                "indian_banking_integrated": True,
+                "cibil_optimization": True,
+                "cultural_considerations": "Indian family financial planning integrated"
+            },
             generated_at=datetime.now().isoformat()
         )
 
@@ -401,23 +419,136 @@ Be concise and actionable."""
         )
 
     async def generate_recommendations_robust(self, debts: List[DebtInDB], analysis: DebtAnalysisResult) -> RecommendationSet:
-        """Robust method with 3-tier fallback strategy."""
-        # Strategy 1: Try original complex AI approach
+        """Robust method with improved AI + fallback strategy."""
+        # Strategy 1: Try improved AI approach with JSON parsing
         try:
             self.fallback_stats["pydantic_attempts"] += 1
-            return await self.generate_recommendations_original(debts, analysis)
+            return await self.generate_recommendations_with_ai(debts, analysis)
         except Exception as e:
-            print(f"Original AI approach failed: {e}")
+            print(f"Enhanced AI approach failed: {e}")
 
         # Strategy 2: Try simple string output approach
         try:
             return await self.generate_recommendations_simple_string(debts, analysis)
         except Exception as e:
-            print(f"String output approach failed: {e}")
+            print(f"Simple AI approach failed: {e}")
 
         # Strategy 3: Use calculation fallback (always works)
         print("Using calculation fallback for recommendations")
         return self.generate_recommendations_calculation_fallback(debts, analysis)
+
+    async def generate_recommendations_with_ai(self, debts: List[DebtInDB], analysis: DebtAnalysisResult) -> RecommendationSet:
+        """Generate recommendations using AI with proper JSON parsing."""
+        if not debts:
+            return self._create_empty_recommendations("unknown")
+
+        try:
+            # Convert debts to frontend format
+            debt_data = []
+            for debt in debts:
+                debt_response = DebtResponse.from_debt_in_db(debt)
+                debt_dict = debt_response.model_dump()
+                debt_data.append(debt_dict)
+
+            # Prepare input for AI agent
+            input_data = {
+                "debts": debt_data,
+                "analysis": analysis.model_dump(),
+                "user_profile": {},
+                "context": "professional_debt_consultation"
+            }
+
+            # Add rate limiting delay to prevent Groq rate limit errors
+            import asyncio
+            await asyncio.sleep(1)  # 1 second delay for recommendations
+
+            # Generate recommendations using main AI agent
+            result = await self.agent.run(json.dumps(input_data, default=str))
+            ai_response = result.output
+
+            # Clean and parse JSON response
+            try:
+                # Remove any markdown formatting
+                json_text = ai_response.strip()
+                if json_text.startswith("```json"):
+                    json_text = json_text[7:]
+                if json_text.endswith("```"):
+                    json_text = json_text[:-3]
+                json_text = json_text.strip()
+
+                # Parse JSON
+                parsed_data = json.loads(json_text)
+
+                # Convert to RecommendationSet
+                return self._convert_ai_response_to_recommendation_set(parsed_data, str(debts[0].user_id))
+
+            except json.JSONDecodeError as e:
+                print(f"AI JSON parsing failed: {e}")
+                print(f"Raw response: {ai_response[:500]}...")
+                # Fall back to simple string approach
+                return await self.generate_recommendations_simple_string(debts, analysis)
+
+        except Exception as e:
+            print(f"AI recommendation generation failed: {e}")
+            # Fall back to calculation method
+            return self.generate_recommendations_calculation_fallback(debts, analysis)
+
+    def _convert_ai_response_to_recommendation_set(self, parsed_data: dict, user_id: str) -> RecommendationSet:
+        """Convert AI response to proper RecommendationSet format."""
+        recommendations = []
+
+        for i, rec_data in enumerate(parsed_data.get("recommendations", [])):
+            recommendation = AIRecommendation(
+                id=str(uuid4()),
+                user_id=user_id,
+                recommendation_type=rec_data.get("recommendation_type", "behavioral"),
+                title=rec_data.get("title", "Professional Recommendation"),
+                description=rec_data.get("description", "Professional debt management guidance"),
+                potential_savings=rec_data.get("potential_savings"),
+                priority_score=rec_data.get("priority_score", 5),
+                is_dismissed=False,
+                created_at=datetime.now().isoformat()
+            )
+            recommendations.append(recommendation)
+
+        return RecommendationSet(
+            recommendations=recommendations,
+            overall_strategy=parsed_data.get("overall_strategy", "comprehensive_approach"),
+            priority_order=parsed_data.get("priority_order", list(range(len(recommendations)))),
+            estimated_impact=parsed_data.get("estimated_impact", {}),
+            generated_at=datetime.now().isoformat()
+        )
+
+    def _create_empty_recommendations(self, user_id: str) -> RecommendationSet:
+        """Create recommendations for debt-free users."""
+        return RecommendationSet(
+            recommendations=[
+                AIRecommendation(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    recommendation_type="behavioral",
+                    title="Build Emergency Fund",
+                    description="Establish 3-6 months of expenses in savings to avoid future debt",
+                    priority_score=9,
+                    is_dismissed=False,
+                    created_at=datetime.now().isoformat()
+                ),
+                AIRecommendation(
+                    id=str(uuid4()),
+                    user_id=user_id,
+                    recommendation_type="behavioral",
+                    title="Start Investing",
+                    description="Begin investing for long-term wealth building",
+                    priority_score=7,
+                    is_dismissed=False,
+                    created_at=datetime.now().isoformat()
+                )
+            ],
+            overall_strategy="wealth_building",
+            priority_order=[0, 1],
+            estimated_impact={"emergency_fund_months": 6, "investment_growth": 0.07},
+            generated_at=datetime.now().isoformat()
+        )
 
     async def generate_recommendations_original(self, debts: List[DebtInDB], analysis: DebtAnalysisResult) -> RecommendationSet:
         """Original complex AI approach (for backward compatibility)."""
@@ -479,7 +610,8 @@ Be concise and actionable."""
         self,
         debts: List[DebtInDB],
         analysis: DebtAnalysisResult,
-        user_profile: Optional[Dict[str, Any]] = None
+        user_profile: Optional[Dict[str, Any]] = None,
+        user_goals: Optional[List[UserGoalResponse]] = None
     ) -> RecommendationSet:
         """
         Generate personalized AI recommendations with robust fallback strategies.
@@ -488,6 +620,7 @@ Be concise and actionable."""
             debts: List of user's debts
             analysis: Debt analysis results
             user_profile: Optional user profile information
+            user_goals: Optional list of user's financial goals
 
         Returns:
             RecommendationSet with personalized recommendations
@@ -498,7 +631,8 @@ Be concise and actionable."""
         self,
         debts: List[DebtInDB],
         analysis: DebtAnalysisResult,
-        user_profile: Optional[Dict[str, Any]] = None
+        user_profile: Optional[Dict[str, Any]] = None,
+        user_goals: Optional[List[UserGoalResponse]] = None
     ) -> RecommendationSet:
         """
         Synchronous version of recommendation generation.

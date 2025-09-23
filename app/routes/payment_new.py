@@ -109,9 +109,9 @@ async def get_payment(
 @router.put("/{payment_id}", response_model=PaymentHistoryResponse)
 async def update_payment(
     payment_id: UUID,
+    current_user: CurrentUser,
     notes: Optional[str] = None,
-    status_update: Optional[PaymentStatus] = None,
-    current_user: CurrentUser
+    status_update: Optional[PaymentStatus] = None
 ) -> PaymentHistoryResponse:
     """
     Update payment details (limited to notes and status for security).

@@ -55,3 +55,6 @@ COMMENT ON COLUMN ai_recommendations.potential_savings IS 'Estimated savings if 
 COMMENT ON COLUMN ai_recommendations.priority_score IS 'AI-calculated priority score (0-10)';
 COMMENT ON COLUMN ai_recommendations.is_dismissed IS 'Whether user has dismissed this recommendation';
 COMMENT ON COLUMN ai_recommendations.metadata IS 'Additional data for the recommendation (JSON format)';
+
+
+

@@ -577,3 +577,6 @@ class AnalyticsRepository(BaseRepository):
                 'error': str(e),
                 'connection': 'failed'
             }
+
+
+

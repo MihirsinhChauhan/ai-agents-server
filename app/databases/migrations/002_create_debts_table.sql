@@ -71,3 +71,6 @@ COMMENT ON COLUMN debts.payment_frequency IS 'How often payments are due';
 COMMENT ON COLUMN debts.days_past_due IS 'Number of days payment is overdue';
 COMMENT ON COLUMN debts.source IS 'How debt was added (manual, plaid, etc.)';
 COMMENT ON COLUMN debts.blockchain_id IS 'Optional blockchain record identifier';
+
+
+

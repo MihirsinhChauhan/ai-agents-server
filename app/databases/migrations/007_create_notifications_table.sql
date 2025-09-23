@@ -59,3 +59,6 @@ COMMENT ON COLUMN notifications.is_read IS 'Whether user has read this notificat
 COMMENT ON COLUMN notifications.scheduled_for IS 'When notification should be sent (NULL for immediate)';
 COMMENT ON COLUMN notifications.sent_at IS 'When notification was actually sent';
 COMMENT ON COLUMN notifications.metadata IS 'Additional notification data (JSON format)';
+
+
+

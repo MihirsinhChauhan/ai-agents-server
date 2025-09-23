@@ -58,3 +58,6 @@ COMMENT ON COLUMN repayment_plans.expected_completion_date IS 'Projected date wh
 COMMENT ON COLUMN repayment_plans.debt_order IS 'Array of debt IDs in priority order for payment';
 COMMENT ON COLUMN repayment_plans.payment_schedule IS 'Detailed monthly payment schedule (JSON array)';
 COMMENT ON COLUMN repayment_plans.is_active IS 'Whether this plan is currently active for the user';
+
+
+

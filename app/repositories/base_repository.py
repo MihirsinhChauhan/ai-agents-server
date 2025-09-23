@@ -412,3 +412,6 @@ class BaseRepository(ABC, Generic[T]):
                 "error": str(e),
                 "connection": "failed"
             }
+
+
+

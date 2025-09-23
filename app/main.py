@@ -2,8 +2,10 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.configs.config import settings
-from app.routes import auth, debts, repayment_plans, notifications
-from app.database import get_supabase
+from app.routes import auth, debt_new, payment_new, ai
+from app.routes.onboarding import router as onboarding_router
+# from app.databases.database import get_supabase  # Not using Supabase
+from app.databases.database import db_manager
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -12,31 +14,48 @@ app = FastAPI(
     version="0.1.0",
 )
 
-# Add CORS middleware
+# Add CORS middleware to allow frontend access
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=[
+        "http://localhost:8080",  # Vite frontend
+        "http://127.0.0.1:8080",  # Alternative localhost
+        "http://localhost:3000",  # Alternative frontend port
+        "http://127.0.0.1:3000",  # Alternative localhost
+    ],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all methods (GET, POST, PUT, DELETE, etc.)
+    allow_headers=["*"],  # Allow all headers
 )
 
-# Include routers
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(debts.router, prefix="/api/debts", tags=["Debt Management"])
-app.include_router(repayment_plans.router, prefix="/api/repayment-plans", tags=["Repayment Plans"])
-app.include_router(notifications.router, prefix="/api/notifications", tags=["Notifications"])
-
-# Startup event
+# Database startup event
 @app.on_event("startup")
 async def startup_event():
-    """
-    Initialize connections on startup
-    """
-    # Initialize Supabase connection
-    get_supabase()
-    print(f"Connected to Supabase at {settings.SUPABASE_URL}")
+    """Initialize database connection pool on startup"""
+    try:
+        await db_manager.create_pool()
+        print("✅ Database connection pool initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize database: {e}")
+        print("⚠️  Continuing without database for debugging...")
+        # Don't raise exception for now
 
+# Include routers - Using updated routes with proper models
+try:
+    app.include_router(auth, prefix="/api/auth", tags=["Authentication"])
+    print("✅ Auth routes loaded")
+    app.include_router(debt_new, prefix="/api/debts", tags=["Debt Management"])
+    print("✅ Debt routes loaded")
+    app.include_router(payment_new, prefix="/api/payments", tags=["Payment Management"])
+    print("✅ Payment routes loaded")
+    app.include_router(ai, prefix="/api/ai", tags=["AI Insights"])
+    print("✅ AI routes loaded")
+    app.include_router(onboarding_router, prefix="/api/onboarding", tags=["Onboarding"])
+    print("✅ Onboarding routes loaded")
+except Exception as e:
+    print(f"❌ Error loading routes: {e}")
+    import traceback
+    traceback.print_exc()
 
 @app.get("/", tags=["Root"])
 async def root():
@@ -44,7 +63,7 @@ async def root():
     Root endpoint that confirms the API is running
     """
     return {
-        "message": "Debt Repayment Optimizer API is running",
+        "message": "DebtEase API is running",
         "docs": "/docs",
         "version": app.version,
     }
@@ -55,25 +74,20 @@ async def health_check():
     """
     Health check endpoint to verify API is operational
     """
-    # Get Supabase client
-    supabase = get_supabase()
-    
-    # Check database connection
-    try:
-        response = await supabase.rpc("health_check").execute()
-        db_status = "healthy" if response else "unhealthy"
-    except Exception:
-        db_status = "unhealthy"
-    
+    from datetime import datetime
     return {
         "status": "healthy",
-        "database": db_status,
         "timestamp": datetime.utcnow().isoformat()
     }
 
 
+
+
+
+
 if __name__ == "__main__":
     import uvicorn
-    from datetime import datetime
-    
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    print("🚀 Starting DebtEase API server...")
+    print("📍 Server will be available at: http://127.0.0.1:8000")
+    print("📚 API Documentation: http://127.0.0.1:8000/docs")
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True, log_level="info")

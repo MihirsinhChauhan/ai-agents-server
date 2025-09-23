@@ -14,8 +14,10 @@ from langgraph.graph import StateGraph, END
 from pydantic import BaseModel, Field
 
 from app.models.debt import DebtInDB
+from app.models.onboarding import UserGoalResponse
 from app.repositories.debt_repository import DebtRepository
 from app.repositories.user_repository import UserRepository
+from app.repositories.goals_repository import GoalsRepository
 from .enhanced_debt_analyzer import EnhancedDebtAnalyzer, DebtAnalysisResult
 from .enhanced_debt_optimizer import EnhancedDebtOptimizer, RepaymentPlan
 from .ai_recommendation_agent import AIRecommendationAgent, RecommendationSet
@@ -30,6 +32,7 @@ class OrchestrationState:
     user_id: str
     debts: List[DebtInDB] = None
     user_profile: Optional[Dict[str, Any]] = None
+    user_goals: List[UserGoalResponse] = None
 
     # Analysis results
     debt_analysis: Optional[DebtAnalysisResult] = None
@@ -74,26 +77,31 @@ class WorkflowResult(BaseModel):
 class DataIngestionNode:
     """Node for loading user data"""
 
-    def __init__(self, debt_repo: DebtRepository, user_repo: UserRepository):
+    def __init__(self, debt_repo: DebtRepository, user_repo: UserRepository, goals_repo: GoalsRepository):
         self.debt_repo = debt_repo
         self.user_repo = user_repo
+        self.goals_repo = goals_repo
 
     async def run(self, state: OrchestrationState) -> OrchestrationState:
-        """Load user debts and profile"""
+        """Load user debts, profile, and goals"""
         try:
             logger.info(f"Loading data for user {state.user_id}")
 
             # Load debts
             user_uuid = UUID(state.user_id)
-            debts = await self.debt_repo.get_by_user_id(user_uuid)
+            debts = await self.debt_repo.get_debts_by_user_id(user_uuid)
 
             # Load user profile
             user_profile = await self._get_user_profile(user_uuid)
 
+            # Load user goals
+            user_goals = await self._get_user_goals(user_uuid)
+
             state.debts = debts or []
             state.user_profile = user_profile
+            state.user_goals = user_goals or []
 
-            logger.info(f"Loaded {len(state.debts)} debts for user {state.user_id}")
+            logger.info(f"Loaded {len(state.debts)} debts and {len(state.user_goals)} goals for user {state.user_id}")
 
         except Exception as e:
             logger.error(f"Data ingestion failed: {e}")
@@ -109,11 +117,23 @@ class DataIngestionNode:
                 return {
                     "monthly_income": user.monthly_income,
                     "email": user.email,
-                    "full_name": user.full_name
+                    "full_name": user.full_name,
+                    "income_frequency": user.income_frequency,
+                    "employment_status": user.employment_status,
+                    "financial_experience": user.financial_experience
                 }
         except Exception as e:
             logger.warning(f"Could not get user profile: {e}")
         return None
+
+    async def _get_user_goals(self, user_id: UUID) -> List[UserGoalResponse]:
+        """Get user's financial goals"""
+        try:
+            goals = await self.goals_repo.get_user_goals(user_id, active_only=True)
+            return goals
+        except Exception as e:
+            logger.warning(f"Could not get user goals: {e}")
+            return []
 
 
 class DebtAnalysisNode:
@@ -129,8 +149,8 @@ class DebtAnalysisNode:
                 logger.info("No debts to analyze")
                 return state
 
-            logger.info(f"Analyzing {len(state.debts)} debts")
-            analysis = await self.analyzer.analyze_debts(state.debts)
+            logger.info(f"Analyzing {len(state.debts)} debts with {len(state.user_goals or [])} goals")
+            analysis = await self.analyzer.analyze_debts(state.debts, state.user_goals)
 
             state.debt_analysis = analysis
             logger.info("Debt analysis completed")
@@ -159,7 +179,8 @@ class RecommendationNode:
             recommendations = await self.recommender.generate_recommendations(
                 debts=state.debts,
                 analysis=state.debt_analysis,
-                user_profile=state.user_profile
+                user_profile=state.user_profile,
+                user_goals=state.user_goals
             )
 
             state.recommendations = recommendations
@@ -331,7 +352,8 @@ class RepaymentOptimizationNode:
                 debts=state.debts,
                 analysis=state.debt_analysis,
                 monthly_payment_budget=state.monthly_payment_budget,
-                preferred_strategy=state.preferred_strategy
+                preferred_strategy=state.preferred_strategy,
+                user_goals=state.user_goals
             )
 
             state.repayment_plan = plan
@@ -378,6 +400,7 @@ class LangGraphOrchestrator:
         # Initialize components
         self.debt_repo = DebtRepository()
         self.user_repo = UserRepository()
+        self.goals_repo = GoalsRepository()
 
         self.debt_analyzer = EnhancedDebtAnalyzer()
         self.recommender = AIRecommendationAgent()
@@ -390,7 +413,7 @@ class LangGraphOrchestrator:
         """Build the LangGraph workflow"""
 
         # Create nodes
-        data_ingestion = DataIngestionNode(self.debt_repo, self.user_repo)
+        data_ingestion = DataIngestionNode(self.debt_repo, self.user_repo, self.goals_repo)
         debt_analysis = DebtAnalysisNode(self.debt_analyzer)
         recommendation = RecommendationNode(self.recommender)
         dti_calculation = DTICalculationNode()
@@ -501,17 +524,39 @@ class LangGraphOrchestrator:
                 errors=[str(e)]
             )
 
-    def _convert_to_workflow_result(self, state: OrchestrationState) -> WorkflowResult:
+    def _convert_to_workflow_result(self, state) -> WorkflowResult:
         """Convert final state to WorkflowResult"""
+        # Handle both OrchestrationState objects and dict states from LangGraph
+        if isinstance(state, dict):
+            # Convert dict to object-like access
+            debt_analysis = state.get('debt_analysis')
+            recommendations = state.get('recommendations')
+            dti_analysis = state.get('dti_analysis')
+            repayment_plan = state.get('repayment_plan')
+            user_id = state.get('user_id', '')
+            processing_time = state.get('processing_time', 0.0)
+            fallback_used = state.get('fallback_used', False)
+            errors = state.get('errors', [])
+        else:
+            # OrchestrationState object
+            debt_analysis = state.debt_analysis
+            recommendations = state.recommendations
+            dti_analysis = state.dti_analysis
+            repayment_plan = state.repayment_plan
+            user_id = state.user_id
+            processing_time = state.processing_time
+            fallback_used = state.fallback_used
+            errors = state.errors or []
+
         return WorkflowResult(
-            debt_analysis=state.debt_analysis,
-            recommendations=state.recommendations,
-            dti_analysis=state.dti_analysis,
-            repayment_plan=state.repayment_plan,
-            user_id=state.user_id,
-            processing_time=state.processing_time,
-            fallback_used=state.fallback_used,
-            errors=state.errors or []
+            debt_analysis=debt_analysis,
+            recommendations=recommendations,
+            dti_analysis=dti_analysis,
+            repayment_plan=repayment_plan,
+            user_id=user_id,
+            processing_time=processing_time,
+            fallback_used=fallback_used,
+            errors=errors
         )
 
     async def get_workflow_status(self, user_id: str) -> Dict[str, Any]:

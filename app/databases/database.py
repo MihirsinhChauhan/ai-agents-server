@@ -49,6 +49,10 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Failed to create database pool: {e}")
             raise
+
+
+# Database management for DebtEase (PostgreSQL with AsyncPG)
+# No Supabase dependencies needed
     
     async def close_pool(self) -> None:
         """Close the connection pool."""
@@ -149,3 +153,33 @@ async def close_database() -> None:
     Should be called during application shutdown.
     """
     await db_manager.close_pool()
+
+
+# Compatibility layer for existing routes expecting SupabaseDB interface
+class SupabaseDB:
+    """Compatibility wrapper for routes expecting SupabaseDB interface."""
+
+    def __init__(self):
+        self.db_manager = db_manager
+
+    async def rpc(self, procedure_name: str, **kwargs):
+        """Mock RPC call for compatibility."""
+        # This is a placeholder for Supabase RPC calls
+        # In a real implementation, this would call stored procedures
+        return None
+
+    async def table(self, table_name: str):
+        """Mock table access for compatibility."""
+        # This is a placeholder for Supabase table access
+        return None
+
+
+# Global SupabaseDB instance for compatibility
+supabase_db = SupabaseDB()
+
+
+async def get_db():
+    """Get database connection for dependency injection."""
+    async with db_manager.get_connection() as conn:
+        yield conn
+

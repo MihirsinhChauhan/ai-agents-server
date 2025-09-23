@@ -1,6 +1,6 @@
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, computed_field
 from uuid import UUID, uuid4
 
@@ -42,7 +42,7 @@ class DebtBase(BaseModel):
     interest_rate: float = Field(..., ge=0, le=100, description="Annual interest rate as percentage")
     is_variable_rate: bool = Field(default=False, description="Whether interest rate is variable")
     minimum_payment: float = Field(..., gt=0, description="Minimum monthly payment required")
-    due_date: Optional[str] = Field(None, pattern=r'^\d{4}-\d{2}-\d{2}$', description="Due date in YYYY-MM-DD format")
+    due_date: Optional[date] = Field(None, description="Due date")
     lender: str = Field(..., min_length=1, max_length=255, description="Name of the lender")
     remaining_term_months: Optional[int] = Field(None, gt=0, description="Remaining term in months")
     is_tax_deductible: bool = Field(default=False, description="Whether interest is tax deductible")
@@ -52,19 +52,6 @@ class DebtBase(BaseModel):
     
     # Legacy fields for backward compatibility
     source: DebtSource = Field(default=DebtSource.MANUAL, description="Source of debt data")
-    details: Dict[str, Any] = Field(default_factory=dict, description="Additional debt details")
-
-    @field_validator('due_date')
-    @classmethod
-    def validate_due_date(cls, v: Optional[str]) -> Optional[str]:
-        """Validate due date format"""
-        if v is not None:
-            try:
-                # Validate the date format and that it's a valid date
-                datetime.strptime(v, '%Y-%m-%d')
-            except ValueError:
-                raise ValueError("Due date must be in YYYY-MM-DD format")
-        return v
 
     @field_validator('interest_rate')
     @classmethod
@@ -85,8 +72,8 @@ class DebtBase(BaseModel):
         return v
 
 
-class DebtCreate(BaseModel):
-    """Model for creating a new debt"""
+class DebtCreateRequest(BaseModel):
+    """Model for API request to create a new debt (without user_id)"""
     name: str = Field(..., min_length=1, max_length=255)
     debt_type: DebtType
     principal_amount: float = Field(..., gt=0)
@@ -94,7 +81,45 @@ class DebtCreate(BaseModel):
     interest_rate: float = Field(..., ge=0, le=100)
     is_variable_rate: bool = Field(default=False)
     minimum_payment: float = Field(..., gt=0)
-    due_date: Optional[str] = Field(None, pattern=r'^\d{4}-\d{2}-\d{2}$')
+    due_date: Optional[date] = Field(None)
+    lender: str = Field(..., min_length=1, max_length=255)
+    remaining_term_months: Optional[int] = Field(None, gt=0)
+    is_tax_deductible: bool = Field(default=False)
+    payment_frequency: PaymentFrequency = Field(default=PaymentFrequency.MONTHLY)
+    is_high_priority: bool = Field(default=False)
+    notes: Optional[str] = Field(None, max_length=1000)
+
+    @field_validator('due_date')
+    @classmethod
+    def validate_due_date(cls, v: Optional[Union[str, date]]) -> Optional[date]:
+        """Validate due date format and convert to date object"""
+        if v is None:
+            return None
+
+        # If already a date object, return it
+        if isinstance(v, date):
+            return v
+
+        # If string, parse and convert to date
+        if isinstance(v, str):
+            try:
+                return datetime.strptime(v, '%Y-%m-%d').date()
+            except ValueError:
+                raise ValueError("Due date must be in YYYY-MM-DD format")
+
+        raise ValueError("Due date must be a string in YYYY-MM-DD format or a date object")
+
+
+class DebtCreate(BaseModel):
+    """Model for creating a new debt (internal use with user_id)"""
+    name: str = Field(..., min_length=1, max_length=255)
+    debt_type: DebtType
+    principal_amount: float = Field(..., gt=0)
+    current_balance: float = Field(..., ge=0)
+    interest_rate: float = Field(..., ge=0, le=100)
+    is_variable_rate: bool = Field(default=False)
+    minimum_payment: float = Field(..., gt=0)
+    due_date: Optional[date] = Field(None)
     lender: str = Field(..., min_length=1, max_length=255)
     remaining_term_months: Optional[int] = Field(None, gt=0)
     is_tax_deductible: bool = Field(default=False)
@@ -105,18 +130,6 @@ class DebtCreate(BaseModel):
     # Internal fields
     user_id: UUID
     source: DebtSource = Field(default=DebtSource.MANUAL)
-    details: Dict[str, Any] = Field(default_factory=dict)
-
-    @field_validator('due_date')
-    @classmethod
-    def validate_due_date(cls, v: Optional[str]) -> Optional[str]:
-        """Validate due date format"""
-        if v is not None:
-            try:
-                datetime.strptime(v, '%Y-%m-%d')
-            except ValueError:
-                raise ValueError("Due date must be in YYYY-MM-DD format")
-        return v
 
 
 class DebtInDB(DebtBase):
@@ -167,6 +180,12 @@ class DebtResponse(BaseModel):
 
     @computed_field
     @property
+    def date(self) -> str:
+        """Compatibility field mapping to due_date"""
+        return self.due_date
+
+    @computed_field
+    @property
     def days_past_due(self) -> int:
         """Calculate days past due based on due_date"""
         if not self.due_date:
@@ -185,6 +204,14 @@ class DebtResponse(BaseModel):
     @classmethod
     def from_debt_in_db(cls, debt: DebtInDB) -> "DebtResponse":
         """Convert DebtInDB to DebtResponse"""
+        # Handle due_date conversion properly
+        due_date_str = ""
+        if debt.due_date:
+            if isinstance(debt.due_date, date):
+                due_date_str = debt.due_date.isoformat()
+            elif isinstance(debt.due_date, str):
+                due_date_str = debt.due_date
+
         return cls(
             id=str(debt.id),
             name=debt.name,
@@ -194,7 +221,7 @@ class DebtResponse(BaseModel):
             interest_rate=debt.interest_rate,
             is_variable_rate=debt.is_variable_rate,
             minimum_payment=debt.minimum_payment,
-            due_date=debt.due_date or "",
+            due_date=due_date_str,
             lender=debt.lender,
             remaining_term_months=debt.remaining_term_months,
             is_tax_deductible=debt.is_tax_deductible,
@@ -238,6 +265,17 @@ class DebtUpdate(BaseModel):
 
     class Config:
         arbitrary_types_allowed = True
+
+
+class DebtSummaryResponse(BaseModel):
+    """Response model for debt summary statistics"""
+    total_debt: float = Field(..., description="Total current debt balance")
+    total_interest_paid: float = Field(default=0.0, description="Total interest paid to date")
+    total_minimum_payments: float = Field(..., description="Sum of all minimum payments")
+    average_interest_rate: float = Field(..., description="Weighted average interest rate")
+    debt_count: int = Field(..., description="Total number of active debts")
+    high_priority_count: int = Field(..., description="Number of high priority debts")
+    upcoming_payments_count: int = Field(default=0, description="Number of payments due soon")
 
 
 # Legacy compatibility - alias for DebtResponse
