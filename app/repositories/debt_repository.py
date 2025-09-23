@@ -42,7 +42,6 @@ class DebtRepository(BaseRepository[DebtInDB]):
             is_high_priority=record['is_high_priority'],
             notes=record['notes'],
             source=record.get('source', 'manual'),
-            details=record.get('details', {}),
             created_at=record['created_at'],
             updated_at=record['updated_at'],
             blockchain_id=record['blockchain_id'],
@@ -69,7 +68,6 @@ class DebtRepository(BaseRepository[DebtInDB]):
             'is_high_priority': model.is_high_priority,
             'notes': model.notes,
             'source': model.source.value,
-            'details': model.details,
             'created_at': model.created_at,
             'updated_at': model.updated_at,
             'blockchain_id': model.blockchain_id,
@@ -95,7 +93,7 @@ class DebtRepository(BaseRepository[DebtInDB]):
             interest_rate=debt_create.interest_rate,
             is_variable_rate=debt_create.is_variable_rate,
             minimum_payment=debt_create.minimum_payment,
-            due_date=debt_create.due_date,
+            due_date=debt_create.due_date,  # Now a date object
             lender=debt_create.lender,
             remaining_term_months=debt_create.remaining_term_months,
             is_tax_deductible=debt_create.is_tax_deductible,
@@ -103,7 +101,6 @@ class DebtRepository(BaseRepository[DebtInDB]):
             is_high_priority=debt_create.is_high_priority,
             notes=debt_create.notes,
             source=debt_create.source,
-            details=debt_create.details,
             created_at=datetime.now(),
             updated_at=datetime.now(),
             is_active=True
@@ -132,6 +129,19 @@ class DebtRepository(BaseRepository[DebtInDB]):
         
         records = await self._fetch_all_with_error_handling(query, *args)
         return [self._record_to_model(record) for record in records]
+
+    async def get_debts_by_user_id(self, user_id: UUID, active_only: bool = True) -> List[DebtInDB]:
+        """
+        Get all debts for a specific user (alternative method signature for compatibility).
+        
+        Args:
+            user_id: User's ID
+            active_only: Whether to include only active debts
+            
+        Returns:
+            List of user's debts
+        """
+        return await self.get_user_debts(user_id, include_inactive=not active_only)
 
     async def get_debts_by_type(self, user_id: UUID, debt_type: DebtType) -> List[DebtInDB]:
         """
@@ -525,3 +535,6 @@ class DebtRepository(BaseRepository[DebtInDB]):
                 updated_debts.append(debt)
         
         return updated_debts
+
+
+

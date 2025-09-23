@@ -1,417 +1,344 @@
 from datetime import datetime
-from typing import List, Any
+from typing import List, Optional
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
-from app.database import SupabaseDB, get_db
+from app.databases.database import SupabaseDB, get_db
 from app.dependencies import get_current_active_user, get_blockchain
-from app.models.user import User
-from app.models.debt import DebtCreate, Debt, DebtUpdate
+from app.models.user import UserInDB
+from app.models.debt import DebtCreate, DebtCreateRequest, DebtResponse, DebtUpdate, DebtSummaryResponse
+from app.repositories.debt_repository import DebtRepository
+from app.repositories.user_repository import UserRepository
+from app.middleware.auth import CurrentUser
 from app.blockchain_interface import BlockchainInterface
 
 router = APIRouter()
 
+# Dependency injection for repositories
+async def get_debt_repo(db: SupabaseDB = Depends(get_db)) -> DebtRepository:
+    """Get debt repository instance"""
+    return DebtRepository(db)
 
-@router.get("/", response_model=List[Debt])
+async def get_user_repo(db: SupabaseDB = Depends(get_db)) -> UserRepository:
+    """Get user repository instance"""
+    return UserRepository(db)
+
+
+@router.get("/", response_model=List[DebtResponse])
 async def get_debts(
+    current_user: CurrentUser,
     active_only: bool = Query(True, description="Only return active debts"),
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db)
-) -> Any:
+    debt_repo: DebtRepository = Depends(get_debt_repo)
+) -> List[DebtResponse]:
     """
     Get all debts for the current user
     """
-    # Find debts for user
-    debts = await db.get_debts(str(current_user.id), active_only)
-    
-    # Convert to Debt models
-    debt_models = []
-    for debt in debts:
-        debt_model = Debt(
-            id=debt["id"],
-            user_id=debt["user_id"],
-            name=debt["name"],
-            type=debt["type"],
-            amount=debt["amount"],
-            interest_rate=debt["interest_rate"],
-            minimum_payment=debt["minimum_payment"],
-            payment_frequency=debt["payment_frequency"],
-            source=debt["source"],
-            due_date=debt.get("due_date"),
-            created_at=debt["created_at"],
-            updated_at=debt["updated_at"],
-            blockchain_id=debt.get("blockchain_id"),
-            is_active=debt["is_active"],
-            details=debt.get("details", {})
+    try:
+        # Get debts using repository
+        debts = await debt_repo.get_debts_by_user_id(current_user.id, active_only)
+
+        # Convert to response models
+        return [DebtResponse.from_debt_in_db(debt) for debt in debts]
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve debts: {str(e)}"
         )
-        debt_models.append(debt_model)
-    
-    return debt_models
 
 
-@router.post("/", response_model=Debt)
+@router.post("/", response_model=DebtResponse)
 async def create_debt(
-    debt_in: DebtCreate,
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db),
+    debt_request: DebtCreateRequest,
+    current_user: CurrentUser,
+    debt_repo: DebtRepository = Depends(get_debt_repo),
     blockchain: BlockchainInterface = Depends(get_blockchain)
-) -> Any:
+) -> DebtResponse:
     """
     Create a new debt
     """
-    # Create debt record
-    debt_id = str(uuid.uuid4())
-    debt_data = {
-        "id": debt_id,
-        "user_id": str(current_user.id),
-        "name": debt_in.name,
-        "type": debt_in.type,
-        "amount": debt_in.amount,
-        "interest_rate": debt_in.interest_rate,
-        "minimum_payment": debt_in.minimum_payment,
-        "payment_frequency": debt_in.payment_frequency,
-        "source": debt_in.source,
-        "due_date": debt_in.due_date,
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat(),
-        "is_active": True,
-        "details": debt_in.details
-    }
-    
-    # Insert into database
-    created_debt = await db.create_debt(debt_data)
-    if not created_debt:
+    try:
+        # Create DebtCreate model with user_id from authenticated user
+        debt_in = DebtCreate(
+            user_id=current_user.id,
+            name=debt_request.name,
+            debt_type=debt_request.debt_type,
+            principal_amount=debt_request.principal_amount,
+            current_balance=debt_request.current_balance,
+            interest_rate=debt_request.interest_rate,
+            is_variable_rate=debt_request.is_variable_rate,
+            minimum_payment=debt_request.minimum_payment,
+            due_date=debt_request.due_date,
+            lender=debt_request.lender,
+            remaining_term_months=debt_request.remaining_term_months,
+            is_tax_deductible=debt_request.is_tax_deductible,
+            payment_frequency=debt_request.payment_frequency,
+            is_high_priority=debt_request.is_high_priority,
+            notes=debt_request.notes
+        )
+
+        # Create debt using repository
+        created_debt = await debt_repo.create_debt(debt_in)
+
+        # Store on blockchain (optional)
+        try:
+            blockchain_data = {
+                "debt_id": str(created_debt.id),
+                "user_id": str(current_user.id),
+                "name": created_debt.name,
+                "type": created_debt.debt_type,
+                "amount": float(created_debt.principal_amount),
+                "interest_rate": float(created_debt.interest_rate),
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+            blockchain_tx = await blockchain.store_debt(blockchain_data)
+
+            # Update debt with blockchain ID if available
+            if blockchain_tx:
+                await debt_repo.update_debt(str(created_debt.id), {"blockchain_id": blockchain_tx})
+                created_debt.blockchain_id = blockchain_tx
+        except Exception as e:
+            # Log blockchain error but don't fail the operation
+            print(f"Blockchain storage failed: {e}")
+
+        return DebtResponse.from_debt_in_db(created_debt)
+
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create debt"
+            detail=f"Failed to create debt: {str(e)}"
         )
-    
-    # Store on blockchain
-    blockchain_data = {
-        "debt_id": debt_id,
-        "user_id": str(current_user.id),
-        "name": debt_in.name,
-        "type": debt_in.type,
-        "amount": float(debt_in.amount),
-        "interest_rate": float(debt_in.interest_rate),
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    
-    blockchain_tx = await blockchain.store_debt(blockchain_data)
-    
-    # Update debt with blockchain ID if available
-    if blockchain_tx:
-        await db.update_debt(
-            debt_id,
-            {"blockchain_id": blockchain_tx}
-        )
-        created_debt["blockchain_id"] = blockchain_tx
-    
-    # Convert to model
-    debt_model = Debt(
-        id=created_debt["id"],
-        user_id=created_debt["user_id"],
-        name=created_debt["name"],
-        type=created_debt["type"],
-        amount=created_debt["amount"],
-        interest_rate=created_debt["interest_rate"],
-        minimum_payment=created_debt["minimum_payment"],
-        payment_frequency=created_debt["payment_frequency"],
-        source=created_debt["source"],
-        due_date=created_debt.get("due_date"),
-        created_at=created_debt["created_at"],
-        updated_at=created_debt["updated_at"],
-        blockchain_id=created_debt.get("blockchain_id"),
-        is_active=created_debt["is_active"],
-        details=created_debt.get("details", {})
-    )
-    
-    return debt_model
 
 
-@router.get("/{debt_id}", response_model=Debt)
+@router.get("/summary", response_model=DebtSummaryResponse)
+async def get_debt_summary(
+    current_user: CurrentUser,
+    debt_repo: DebtRepository = Depends(get_debt_repo)
+) -> DebtSummaryResponse:
+    """
+    Get debt summary statistics for the current user
+    """
+    try:
+        # Get all active debts for user
+        debts = await debt_repo.get_debts_by_user_id(current_user.id, active_only=True)
+
+        if not debts:
+            return DebtSummaryResponse(
+                total_debt=0,
+                total_interest_paid=0,
+                total_minimum_payments=0,
+                average_interest_rate=0,
+                debt_count=0,
+                high_priority_count=0,
+                upcoming_payments_count=0
+            )
+
+        # Calculate summary statistics
+        total_debt = sum(debt.current_balance for debt in debts)
+        total_minimum_payments = sum(debt.minimum_payment for debt in debts)
+        high_priority_count = sum(1 for debt in debts if debt.is_high_priority)
+
+        # Calculate weighted average interest rate
+        total_principal = sum(debt.principal_amount for debt in debts)
+        if total_principal > 0:
+            average_interest_rate = sum(
+                (debt.principal_amount / total_principal) * debt.interest_rate
+                for debt in debts
+            )
+        else:
+            average_interest_rate = 0
+
+        # Count upcoming payments (due within 7 days)
+        from datetime import date, timedelta
+        today = date.today()
+        upcoming_count = 0
+
+        for debt in debts:
+            if debt.due_date:
+                try:
+                    due_date_obj = datetime.strptime(debt.due_date, '%Y-%m-%d').date()
+                    if today <= due_date_obj <= today + timedelta(days=7):
+                        upcoming_count += 1
+                except ValueError:
+                    pass
+
+        return DebtSummaryResponse(
+            total_debt=total_debt,
+            total_interest_paid=0,  # Would need payment history to calculate this
+            total_minimum_payments=total_minimum_payments,
+            average_interest_rate=round(average_interest_rate, 2),
+            debt_count=len(debts),
+            high_priority_count=high_priority_count,
+            upcoming_payments_count=upcoming_count
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get debt summary: {str(e)}"
+        )
+
+
+@router.get("/{debt_id}", response_model=DebtResponse)
 async def get_debt(
     debt_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db)
-) -> Any:
+    current_user: CurrentUser,
+    debt_repo: DebtRepository = Depends(get_debt_repo)
+) -> DebtResponse:
     """
     Get a specific debt by ID
     """
-    # Find debt
-    debt = await db.get_debt(debt_id)
-    
-    if not debt:
+    try:
+        # Get debt using repository
+        debt = await debt_repo.get_debt_by_id(debt_id)
+
+        if not debt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Debt not found"
+            )
+
+        # Check if debt belongs to user
+        if debt.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to access this debt"
+            )
+
+        return DebtResponse.from_debt_in_db(debt)
+
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Debt not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to retrieve debt: {str(e)}"
         )
-    
-    # Check if debt belongs to user
-    if debt["user_id"] != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to access this debt"
-        )
-    
-    # Convert to model
-    debt_model = Debt(
-        id=debt["id"],
-        user_id=debt["user_id"],
-        name=debt["name"],
-        type=debt["type"],
-        amount=debt["amount"],
-        interest_rate=debt["interest_rate"],
-        minimum_payment=debt["minimum_payment"],
-        payment_frequency=debt["payment_frequency"],
-        source=debt["source"],
-        due_date=debt.get("due_date"),
-        created_at=debt["created_at"],
-        updated_at=debt["updated_at"],
-        blockchain_id=debt.get("blockchain_id"),
-        is_active=debt["is_active"],
-        details=debt.get("details", {})
-    )
-    
-    return debt_model
 
 
-@router.put("/{debt_id}", response_model=Debt)
+@router.put("/{debt_id}", response_model=DebtResponse)
 async def update_debt(
     debt_id: str,
     debt_in: DebtUpdate,
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db),
+    current_user: CurrentUser,
+    debt_repo: DebtRepository = Depends(get_debt_repo),
     blockchain: BlockchainInterface = Depends(get_blockchain)
-) -> Any:
+) -> DebtResponse:
     """
     Update a debt
     """
-    # Find debt
-    debt = await db.get_debt(debt_id)
-    
-    if not debt:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Debt not found"
-        )
-    
-    # Check if debt belongs to user
-    if debt["user_id"] != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to update this debt"
-        )
-    
-    # Update fields
-    update_data = debt_in.dict(exclude_unset=True)
-    update_data["updated_at"] = datetime.utcnow().isoformat()
-    
-    # Update in database
-    updated_debt = await db.update_debt(debt_id, update_data)
-    if not updated_debt:
+    try:
+        # Get debt to check ownership
+        debt = await debt_repo.get_debt_by_id(debt_id)
+
+        if not debt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Debt not found"
+            )
+
+        # Check if debt belongs to user
+        if debt.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to update this debt"
+            )
+
+        # Update debt using repository
+        updated_debt = await debt_repo.update_debt(debt_id, debt_in.model_dump(exclude_unset=True))
+
+        if not updated_debt:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update debt"
+            )
+
+        # Update on blockchain if significant changes
+        if any(field in debt_in.model_fields_set for field in ['principal_amount', 'interest_rate']):
+            try:
+                blockchain_data = {
+                    "debt_id": debt_id,
+                    "user_id": str(current_user.id),
+                    "name": updated_debt.name,
+                    "type": updated_debt.debt_type,
+                    "amount": float(updated_debt.principal_amount),
+                    "interest_rate": float(updated_debt.interest_rate),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "action": "update"
+                }
+
+                await blockchain.store_debt(blockchain_data)
+            except Exception as e:
+                print(f"Blockchain update failed: {e}")
+
+        return DebtResponse.from_debt_in_db(updated_debt)
+
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to update debt"
+            detail=f"Failed to update debt: {str(e)}"
         )
-    
-    # Update on blockchain if needed
-    if "amount" in update_data or "interest_rate" in update_data:
-        blockchain_data = {
-            "debt_id": debt_id,
-            "user_id": str(current_user.id),
-            "name": updated_debt["name"],
-            "type": updated_debt["type"],
-            "amount": float(updated_debt["amount"]),
-            "interest_rate": float(updated_debt["interest_rate"]),
-            "timestamp": datetime.utcnow().isoformat(),
-            "action": "update"
-        }
-        
-        await blockchain.store_debt(blockchain_data)
-    
-    # Convert to model
-    debt_model = Debt(
-        id=updated_debt["id"],
-        user_id=updated_debt["user_id"],
-        name=updated_debt["name"],
-        type=updated_debt["type"],
-        amount=updated_debt["amount"],
-        interest_rate=updated_debt["interest_rate"],
-        minimum_payment=updated_debt["minimum_payment"],
-        payment_frequency=updated_debt["payment_frequency"],
-        source=updated_debt["source"],
-        due_date=updated_debt.get("due_date"),
-        created_at=updated_debt["created_at"],
-        updated_at=updated_debt["updated_at"],
-        blockchain_id=updated_debt.get("blockchain_id"),
-        is_active=updated_debt["is_active"],
-        details=updated_debt.get("details", {})
-    )
-    
-    return debt_model
 
 
-@router.delete("/{debt_id}", response_model=Debt)
+@router.delete("/{debt_id}", response_model=DebtResponse)
 async def delete_debt(
     debt_id: str,
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db),
+    current_user: CurrentUser,
+    debt_repo: DebtRepository = Depends(get_debt_repo),
     blockchain: BlockchainInterface = Depends(get_blockchain)
-) -> Any:
+) -> DebtResponse:
     """
     Mark a debt as inactive (soft delete)
     """
-    # Find debt
-    debt = await db.get_debt(debt_id)
-    
-    if not debt:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Debt not found"
-        )
-    
-    # Check if debt belongs to user
-    if debt["user_id"] != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to delete this debt"
-        )
-    
-    # Update in database (soft delete)
-    updated_debt = await db.update_debt(
-        debt_id,
-        {
-            "is_active": False,
-            "updated_at": datetime.utcnow().isoformat()
-        }
-    )
-    
-    if not updated_debt:
+    try:
+        # Get debt to check ownership
+        debt = await debt_repo.get_debt_by_id(debt_id)
+
+        if not debt:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Debt not found"
+            )
+
+        # Check if debt belongs to user
+        if debt.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Not authorized to delete this debt"
+            )
+
+        # Soft delete debt using repository
+        updated_debt = await debt_repo.update_debt(debt_id, {"is_active": False})
+
+        if not updated_debt:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to delete debt"
+            )
+
+        # Record on blockchain (optional)
+        try:
+            blockchain_data = {
+                "debt_id": debt_id,
+                "user_id": str(current_user.id),
+                "timestamp": datetime.utcnow().isoformat(),
+                "action": "delete"
+            }
+
+            await blockchain.store_debt(blockchain_data)
+        except Exception as e:
+            print(f"Blockchain delete recording failed: {e}")
+
+        return DebtResponse.from_debt_in_db(updated_debt)
+
+    except HTTPException:
+        raise
+    except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to delete debt"
+            detail=f"Failed to delete debt: {str(e)}"
         )
-    
-    # Record on blockchain
-    blockchain_data = {
-        "debt_id": debt_id,
-        "user_id": str(current_user.id),
-        "timestamp": datetime.utcnow().isoformat(),
-        "action": "delete"
-    }
-    
-    await blockchain.store_debt(blockchain_data)
-    
-    # Convert to model
-    debt_model = Debt(
-        id=updated_debt["id"],
-        user_id=updated_debt["user_id"],
-        name=updated_debt["name"],
-        type=updated_debt["type"],
-        amount=updated_debt["amount"],
-        interest_rate=updated_debt["interest_rate"],
-        minimum_payment=updated_debt["minimum_payment"],
-        payment_frequency=updated_debt["payment_frequency"],
-        source=updated_debt["source"],
-        due_date=updated_debt.get("due_date"),
-        created_at=updated_debt["created_at"],
-        updated_at=updated_debt["updated_at"],
-        blockchain_id=updated_debt.get("blockchain_id"),
-        is_active=updated_debt["is_active"],
-        details=updated_debt.get("details", {})
-    )
-    
-    return debt_model
-
-
-@router.post("/{debt_id}/payment", response_model=dict)
-async def record_payment(
-    debt_id: str,
-    amount: float,
-    current_user: User = Depends(get_current_active_user),
-    db: SupabaseDB = Depends(get_db),
-    blockchain: BlockchainInterface = Depends(get_blockchain)
-) -> Any:
-    """
-    Record a payment for a debt
-    """
-    # Find debt
-    debt = await db.get_debt(debt_id)
-    
-    if not debt:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Debt not found"
-        )
-    
-    # Check if debt belongs to user
-    if debt["user_id"] != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to make payments on this debt"
-        )
-    
-    # Check if debt is active
-    if not debt["is_active"]:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot make payments on inactive debt"
-        )
-    
-    # Validate payment amount
-    if amount <= 0:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Payment amount must be positive"
-        )
-    
-    # Create payment record
-    payment_id = str(uuid.uuid4())
-    payment_data = {
-        "id": payment_id,
-        "debt_id": debt_id,
-        "user_id": str(current_user.id),
-        "amount": amount,
-        "date": datetime.utcnow().isoformat(),
-        "status": "completed",
-        "created_at": datetime.utcnow().isoformat(),
-        "updated_at": datetime.utcnow().isoformat()
-    }
-    
-    # Insert payment into database
-    created_payment = await db.create_payment(payment_data)
-    if not created_payment:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to record payment"
-        )
-    
-    # Record payment on blockchain
-    blockchain_data = {
-        "payment_id": payment_id,
-        "debt_id": debt_id,
-        "user_id": str(current_user.id),
-        "amount": amount,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-    
-    blockchain_tx = await blockchain.record_payment(blockchain_data)
-    
-    # Update payment with blockchain ID if available
-    if blockchain_tx:
-        await db.update_payment(
-            payment_id,
-            {"blockchain_id": blockchain_tx}
-        )
-        created_payment["blockchain_id"] = blockchain_tx
-    
-    return {
-        "payment_id": created_payment["id"],
-        "debt_id": created_payment["debt_id"],
-        "amount": created_payment["amount"],
-        "date": created_payment["date"],
-        "status": created_payment["status"],
-        "blockchain_id": created_payment.get("blockchain_id")
-    }

@@ -36,3 +36,6 @@ COMMENT ON COLUMN users.email IS 'User email address - must be unique and valid 
 COMMENT ON COLUMN users.monthly_income IS 'User monthly income for DTI calculations';
 COMMENT ON COLUMN users.password_hash IS 'Bcrypt hashed password';
 COMMENT ON COLUMN users.is_active IS 'Whether the user account is active';
+
+
+

@@ -50,3 +50,6 @@ COMMENT ON COLUMN user_streaks.longest_streak IS 'Longest streak ever achieved b
 COMMENT ON COLUMN user_streaks.last_check_in IS 'Timestamp of last payment log activity';
 COMMENT ON COLUMN user_streaks.total_payments_logged IS 'Total number of payments logged by user';
 COMMENT ON COLUMN user_streaks.milestones_achieved IS 'Array of milestone identifiers achieved';
+
+
+

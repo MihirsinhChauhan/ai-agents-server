@@ -5,7 +5,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
-from app.database import SupabaseDB, get_db
+from app.databases.database import SupabaseDB, get_db
 from app.dependencies import get_current_active_user, get_blockchain
 from app.models.user import User
 from app.models.repayment_plan import RepaymentPlan, RepaymentStrategy

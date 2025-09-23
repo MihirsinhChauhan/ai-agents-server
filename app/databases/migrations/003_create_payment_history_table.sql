@@ -61,3 +61,6 @@ COMMENT ON COLUMN payment_history.interest_portion IS 'Amount applied to interes
 COMMENT ON COLUMN payment_history.payment_method IS 'How payment was made (bank transfer, card, etc.)';
 COMMENT ON COLUMN payment_history.status IS 'Payment processing status';
 COMMENT ON COLUMN payment_history.blockchain_id IS 'Optional blockchain transaction identifier';
+
+
+

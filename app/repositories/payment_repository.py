@@ -624,3 +624,6 @@ class PaymentRepository(BaseRepository[PaymentInDB]):
         except Exception as e:
             logger.error(f"Failed to bulk create payments: {e}")
             raise
+
+
+

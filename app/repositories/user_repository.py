@@ -28,12 +28,12 @@ class UserRepository(BaseRepository[UserInDB]):
             email=record['email'],
             full_name=record['full_name'],
             monthly_income=record['monthly_income'],
-            phone_number=record['phone_number'],
-            notification_preferences=record['notification_preferences'] or {},
+            phone_number=None,  # Not in current schema
+            notification_preferences={},  # Not in current schema
             hashed_password=record['password_hash'],
-            is_verified=record['is_verified'],
+            is_verified=False,  # Not in current schema
             is_active=record['is_active'],
-            plaid_access_token=record['plaid_access_token'],
+            plaid_access_token=None,  # Not in current schema
             created_at=record['created_at'],
             updated_at=record['updated_at']
         )
@@ -45,14 +45,11 @@ class UserRepository(BaseRepository[UserInDB]):
             'email': model.email,
             'full_name': model.full_name,
             'monthly_income': model.monthly_income,
-            'phone_number': model.phone_number,
-            'notification_preferences': model.notification_preferences,
             'password_hash': model.hashed_password,
-            'is_verified': model.is_verified,
             'is_active': model.is_active,
-            'plaid_access_token': model.plaid_access_token,
             'created_at': model.created_at,
             'updated_at': model.updated_at
+            # Excluding: phone_number, notification_preferences, is_verified, plaid_access_token (not in current schema)
         }
 
     async def create_user(self, user_create: UserCreate) -> UserInDB:
@@ -393,3 +390,6 @@ class UserRepository(BaseRepository[UserInDB]):
             }
         
         return None
+
+
+
