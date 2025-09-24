@@ -29,16 +29,11 @@ scikit-learn>=1.2.2
 
 # API Integrations
 httpx>=0.24.0
-plaid-python>=11.3.0
-
-# Notification Services
-twilio>=8.0.0
-sendgrid>=6.9.7
+groq>=0.4.0
 
 # Testing
 pytest>=7.3.1
 pytest-asyncio>=0.21.0
-httpx>=0.24.0
 
 # Development
 black>=23.3.0

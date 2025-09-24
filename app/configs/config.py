@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     # Removed CORS settings for direct API access
     
     # Database Settings
+    # Support both DATABASE_URL (production) and individual settings (development)
+    DATABASE_URL: Optional[str] = os.getenv("DATABASE_URL", None)
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
     DB_PORT: int = int(os.getenv("DB_PORT", 5432))
     DB_USER: str = os.getenv("DB_USER", "postgres")

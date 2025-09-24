@@ -24,10 +24,15 @@ class DatabaseManager:
     
     def _build_connection_string(self) -> str:
         """Build the PostgreSQL connection string from settings."""
-        return (
-            f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
-            f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-        )
+        if settings.DATABASE_URL:
+            # Use DATABASE_URL if provided (production)
+            return settings.DATABASE_URL
+        else:
+            # Build from individual components (development)
+            return (
+                f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
+                f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+            )
     
     async def create_pool(self) -> None:
         """
@@ -35,17 +40,28 @@ class DatabaseManager:
         Uses settings from config for pool size and connection parameters.
         """
         try:
-            self.pool = await asyncpg.create_pool(
-                host=settings.DB_HOST,
-                port=settings.DB_PORT,
-                user=settings.DB_USER,
-                password=settings.DB_PASSWORD,
-                database=settings.DB_NAME,
-                min_size=settings.DB_MIN_SIZE,
-                max_size=settings.DB_MAX_SIZE,
-                command_timeout=60,
-            )
-            logger.info(f"Database pool created successfully with {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
+            if settings.DATABASE_URL:
+                # Use DATABASE_URL for production (Render, Heroku, etc.)
+                self.pool = await asyncpg.create_pool(
+                    dsn=settings.DATABASE_URL,
+                    min_size=settings.DB_MIN_SIZE,
+                    max_size=settings.DB_MAX_SIZE,
+                    command_timeout=60,
+                )
+                logger.info(f"Database pool created from DATABASE_URL with {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
+            else:
+                # Use individual connection parameters for development
+                self.pool = await asyncpg.create_pool(
+                    host=settings.DB_HOST,
+                    port=settings.DB_PORT,
+                    user=settings.DB_USER,
+                    password=settings.DB_PASSWORD,
+                    database=settings.DB_NAME,
+                    min_size=settings.DB_MIN_SIZE,
+                    max_size=settings.DB_MAX_SIZE,
+                    command_timeout=60,
+                )
+                logger.info(f"Database pool created with individual params: {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
         except Exception as e:
             logger.error(f"Failed to create database pool: {e}")
             raise
