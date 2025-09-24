@@ -8,9 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from uuid import UUID
 
 from app.services.ai_service import AIService
+from app.services.ai_insights_cache_service import AIInsightsCacheService
 from app.repositories.debt_repository import DebtRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.analytics_repository import AnalyticsRepository
+from app.databases.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ai import (
     AIInsightsResponse,
     AIRecommendationResponse,
@@ -54,6 +57,13 @@ async def get_ai_service(
         analytics_repo=analytics_repo
     )
 
+# Dependency injection for AI insights cache service
+async def get_ai_cache_service(
+    db_session: AsyncSession = Depends(get_db)
+) -> AIInsightsCacheService:
+    """Get AI insights cache service instance"""
+    return AIInsightsCacheService(db_session)
+
 router = APIRouter()
 
 
@@ -63,6 +73,7 @@ async def get_ai_insights(
     monthly_payment_budget: Optional[float] = None,
     preferred_strategy: Optional[str] = None,
     include_dti: bool = True,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service),
     ai_service: AIService = Depends(get_ai_service)
 ):
     """
@@ -91,20 +102,23 @@ async def get_ai_insights(
                 detail="Preferred strategy must be either 'avalanche' or 'snowball'"
             )
 
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
+        # Check if user has debts first
+        user_debts = await ai_cache_service.debt_repo.get_debts_by_user_id(current_user.id)
         if not user_debts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No debts found for analysis. Please add some debts first."
             )
 
-        insights = await ai_service.get_ai_insights(
-            user_id=current_user.id,
-            monthly_payment_budget=monthly_payment_budget,
-            preferred_strategy=preferred_strategy,
-            include_dti=include_dti
-        )
+        # Get AI insights with intelligent caching
+        insights, is_cached = await ai_cache_service.get_ai_insights(current_user.id)
+
+        # Add cache metadata to response
+        insights["metadata"] = {
+            **insights.get("metadata", {}),
+            "cached": is_cached,
+            "cache_source": "database" if is_cached else "live_generation"
+        }
 
         return AIInsightsResponse(**insights)
 
@@ -855,6 +869,7 @@ async def get_enhanced_ai_insights(
     current_user: CurrentUser,
     monthly_payment_budget: Optional[float] = None,
     preferred_strategy: Optional[str] = None,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service),
     ai_service: AIService = Depends(get_ai_service)
 ):
     """
@@ -879,25 +894,26 @@ async def get_enhanced_ai_insights(
                 detail="Preferred strategy must be either 'avalanche' or 'snowball'"
             )
 
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
+        # Check if user has debts first
+        user_debts = await ai_cache_service.debt_repo.get_debts_by_user_id(current_user.id)
         if not user_debts:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="No debts found for analysis. Please add some debts first."
             )
 
-        insights = await ai_service.get_enhanced_ai_insights(
-            user_id=current_user.id,
-            monthly_payment_budget=monthly_payment_budget,
-            preferred_strategy=preferred_strategy
-        )
+        # Get cached insights with fallback to AI generation
+        insights, is_cached = await ai_cache_service.get_ai_insights(current_user.id)
 
         # Return in the format expected by the frontend EnhancedInsightsResponse
         return {
-            "insights": insights,
-            "recommendations": insights.get("alternative_strategies", []),
-            "dtiAnalysis": None  # Add DTI analysis if needed
+            "insights": {
+                **insights,
+                "cached": is_cached,
+                "cache_source": "database" if is_cached else "live_generation"
+            },
+            "recommendations": insights.get("recommendations", []),
+            "dtiAnalysis": insights.get("debt_analysis", {}).get("dti_analysis", None)
         }
 
     except HTTPException:
@@ -916,4 +932,168 @@ async def get_enhanced_ai_insights(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate enhanced AI insights. Please try again later."
+        )
+
+
+@router.get("/insights/status")
+async def get_insights_status(
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Get the processing status of AI insights for the current user.
+    Returns cache status, processing status, or completion info.
+    """
+    try:
+        status_info = await ai_cache_service.get_insights_status(current_user.id)
+        return status_info
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to get insights status for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get insights status. Please try again later."
+        )
+
+
+@router.post("/insights/refresh")
+async def refresh_insights(
+    current_user: CurrentUser,
+    force: bool = False,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Force refresh of AI insights for the current user.
+
+    Query Parameters:
+    - force: If true, invalidates existing cache and forces regeneration
+    """
+    try:
+        refresh_info = await ai_cache_service.refresh_insights(
+            user_id=current_user.id,
+            force=force
+        )
+        return refresh_info
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to refresh insights for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh insights. Please try again later."
+        )
+
+
+@router.delete("/insights/cache")
+async def invalidate_cache(
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Invalidate the AI insights cache for the current user.
+    This will force fresh generation on the next insights request.
+    """
+    try:
+        success = await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        if success:
+            return {"message": "Cache invalidated successfully"}
+        else:
+            return {"message": "Cache invalidation completed with warnings"}
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to invalidate cache for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to invalidate cache. Please try again later."
+        )
+
+
+@router.get("/queue/status")
+async def get_queue_status(
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Get the status of the AI processing queue.
+    Returns queue statistics and worker information.
+    """
+    try:
+        from app.services.ai_processing_worker import get_ai_worker
+
+        worker = get_ai_worker()
+        if not worker:
+            return {
+                "worker_status": "not_started",
+                "message": "AI processing worker is not running"
+            }
+
+        # Get database session for queue status
+        from app.databases.database import get_db
+        async for db_session in get_db():
+            try:
+                status = await worker.get_queue_status(db_session)
+                return status
+            finally:
+                await db_session.close()
+
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to get queue status: {e}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get queue status. Please try again later."
+        )
+
+
+@router.post("/queue/cleanup")
+async def cleanup_stale_jobs(
+    current_user: CurrentUser,
+    hours: int = 1
+):
+    """
+    Clean up stale processing jobs that have been running too long.
+
+    Query Parameters:
+    - hours: Maximum processing time threshold in hours (default: 1)
+    """
+    try:
+        from app.services.ai_processing_worker import get_ai_worker
+        from app.databases.database import get_db
+
+        worker = get_ai_worker()
+        if not worker:
+            return {
+                "message": "AI processing worker is not running",
+                "cleaned_count": 0
+            }
+
+        # Get database session for cleanup
+        async for db_session in get_db():
+            try:
+                cleaned_count = await worker.cleanup_stale_jobs(db_session, hours)
+                return {
+                    "message": f"Cleaned up {cleaned_count} stale jobs",
+                    "cleaned_count": cleaned_count
+                }
+            finally:
+                await db_session.close()
+
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to cleanup stale jobs: {e}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to cleanup stale jobs. Please try again later."
         )

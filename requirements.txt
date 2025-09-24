@@ -7,9 +7,9 @@ python-multipart>=0.0.6
 email-validator>=2.0.0
 
 # Database
-supabase>=1.0.0
-postgrest>=0.10.6
+asyncpg>=0.29.0
 psycopg2-binary>=2.9.6
+python-dotenv>=1.0.0
 
 # Authentication and Security
 python-jose>=3.3.0

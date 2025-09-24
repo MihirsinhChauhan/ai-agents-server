@@ -22,8 +22,17 @@ from app.models.analytics import DebtSummaryResponse as AnalyticsDebtSummaryResp
 from app.middleware.auth import CurrentUser
 from app.utils.auth import AuthUtils
 from app.services.ai_service import AIService
+from app.services.ai_insights_cache_service import AIInsightsCacheService
+from app.databases.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+
+
+# Dependency injection
+async def get_ai_cache_service(db_session: AsyncSession = Depends(get_db)) -> AIInsightsCacheService:
+    """Get AI insights cache service instance"""
+    return AIInsightsCacheService(db_session)
 
 
 # Request/Response models
@@ -108,7 +117,8 @@ async def get_user_debts(
 @router.post("/", response_model=DebtResponse, status_code=status.HTTP_201_CREATED)
 async def create_debt(
     debt_request: DebtCreateRequest,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> DebtResponse:
     """
     Create a new debt for the current user.
@@ -145,12 +155,12 @@ async def create_debt(
                 detail="Failed to create debt"
             )
 
-        # Invalidate AI cache since debt data changed
+        # Invalidate AI insights cache since debt portfolio has changed
         try:
-            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
-            ai_service.invalidate_user_cache(current_user.id)
-        except Exception:
-            # Don't fail the debt creation if cache invalidation fails
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
             pass
 
         # Return frontend-compatible response
@@ -262,7 +272,8 @@ async def get_debt(
 async def update_debt(
     debt_id: UUID,
     debt_update: DebtUpdate,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> DebtResponse:
     """
     Update an existing debt.
@@ -295,12 +306,12 @@ async def update_debt(
                 detail="Failed to update debt"
             )
 
-        # Invalidate AI cache since debt data changed
+        # Invalidate AI insights cache since debt portfolio has changed
         try:
-            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
-            ai_service.invalidate_user_cache(current_user.id)
-        except Exception:
-            # Don't fail the debt update if cache invalidation fails
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
             pass
 
         # Return frontend-compatible response
@@ -318,7 +329,8 @@ async def update_debt(
 @router.delete("/{debt_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_debt(
     debt_id: UUID,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> None:
     """
     Soft delete a debt (mark as inactive).
@@ -351,12 +363,12 @@ async def delete_debt(
                 detail="Failed to delete debt"
             )
 
-        # Invalidate AI cache since debt data changed
+        # Invalidate AI insights cache since debt portfolio has changed
         try:
-            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
-            ai_service.invalidate_user_cache(current_user.id)
-        except Exception:
-            # Don't fail the debt deletion if cache invalidation fails
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
             pass
 
     except HTTPException:
@@ -372,7 +384,8 @@ async def delete_debt(
 async def record_payment(
     debt_id: UUID,
     payment_data: PaymentRecordRequest,
-    current_user: CurrentUser
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> PaymentRecordResponse:
     """
     Record a payment for a specific debt.
@@ -439,12 +452,12 @@ async def record_payment(
             payment, updated_debt, debt.current_balance
         )
 
-        # Invalidate AI cache since debt balance changed
+        # Invalidate AI insights cache since debt balance has changed
         try:
-            ai_service = AIService(debt_repo, None, None)  # Only need debt_repo for cache invalidation
-            ai_service.invalidate_user_cache(current_user.id)
-        except Exception:
-            # Don't fail the payment recording if cache invalidation fails
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
             pass
 
         # Convert to frontend-compatible responses

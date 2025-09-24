@@ -13,7 +13,7 @@ from pydantic_ai.models.openai import OpenAIModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from pydantic_ai.models.groq import GroqModel
 from pydantic_ai.providers.groq import GroqProvider
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.configs.config import settings
 from app.models.debt import DebtInDB, DebtResponse
@@ -37,10 +37,31 @@ class DebtAnalysisResult(BaseModel):
     smallest_debt_amount: float = Field(..., description="Smallest debt amount")
     largest_debt_id: str = Field(..., description="ID of debt with largest balance")
     largest_debt_amount: float = Field(..., description="Largest debt amount")
-    
+
     # High impact debts
     high_priority_debts: List[str] = Field(..., description="IDs of high priority debts")
     high_interest_debts: List[str] = Field(..., description="IDs of debts with interest > 10%")
+
+    # UUID to string conversion validators
+    @field_validator('highest_interest_debt_id', 'smallest_debt_id', 'largest_debt_id', mode='before')
+    @classmethod
+    def convert_uuid_to_string(cls, v):
+        """Convert UUID objects to strings to prevent Pydantic validation errors."""
+        if v is None:
+            return None
+        if isinstance(v, UUID):
+            return str(v)
+        return str(v)
+
+    @field_validator('high_priority_debts', 'high_interest_debts', mode='before')
+    @classmethod
+    def convert_uuid_list_to_strings(cls, v):
+        """Convert list of UUID objects to list of strings."""
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(item) if isinstance(item, UUID) else str(item) for item in v]
+        return v
     overdue_debts: List[str] = Field(..., description="IDs of overdue debts")
     
     # Financial health indicators

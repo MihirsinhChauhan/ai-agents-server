@@ -390,7 +390,7 @@ RESPOND WITH ONLY VALID JSON. NO EXPLANATIONS. NO MARKDOWN. NO TEXT BEFORE OR AF
                 "total_potential_savings": sum(r.potential_savings or 0 for r in recommendations),
                 "indian_banking_integrated": True,
                 "cibil_optimization": True,
-                "cultural_considerations": "Indian family financial planning integrated"
+                "cultural_considerations": 1.0  # Indian family financial planning integrated (converted to float)
             },
             generated_at=datetime.now().isoformat()
         )
