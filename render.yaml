@@ -14,15 +14,13 @@ services:
         value: groq
       - key: LLM_MODEL
         value: llama-3.1-8b-instant
-      - key: DB_HOST
-        sync: false
-      - key: DB_PORT
-        value: 5432
-      - key: DB_USER
-        sync: false
-      - key: DB_PASSWORD
-        sync: false
-      - key: DB_NAME
-        sync: false
+      - key: DATABASE_URL
+        fromDatabase:
+          name: debtease-db
+          property: connectionString
       - key: ENVIRONMENT
         value: production
+
+databases:
+  - name: debtease-db
+    plan: free
