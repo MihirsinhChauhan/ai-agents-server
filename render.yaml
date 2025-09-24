@@ -3,7 +3,7 @@ services:
     name: debtease-server
     env: python
     plan: free
-    buildCommand: pip install -e .[prod]
+    buildCommand: pip install -e .[prod] && python run_migrations.py
     startCommand: gunicorn app.main:app -w 2 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
