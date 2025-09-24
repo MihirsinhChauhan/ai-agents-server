@@ -21,7 +21,7 @@ router = APIRouter()
 # Dependency injection for repositories
 async def get_debt_repo(db: SupabaseDB = Depends(get_db)) -> DebtRepository:
     """Get debt repository instance"""
-    return DebtRepository(db)
+    return DebtRepository()
 
 async def get_user_repo(db: SupabaseDB = Depends(get_db)) -> UserRepository:
     """Get user repository instance"""

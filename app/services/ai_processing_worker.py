@@ -44,22 +44,9 @@ class AIProcessingWorker:
 
     async def start(self):
         """Start the background processing workers."""
-        if self.is_running:
-            logger.warning("AI processing worker already running")
-            return
-
-        logger.info(f"Starting AI processing worker with {self.max_workers} workers")
-        self.is_running = True
-
-        # Start worker tasks
-        for i in range(self.max_workers):
-            worker_task = asyncio.create_task(
-                self._worker_loop(worker_id=i),
-                name=f"ai-worker-{i}"
-            )
-            self.workers.append(worker_task)
-
-        logger.info("AI processing workers started successfully")
+        # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
+        logger.warning("AI processing worker is temporarily disabled - not starting workers")
+        return
 
     async def stop(self):
         """Stop all background workers gracefully."""
@@ -321,13 +308,9 @@ async def start_ai_worker(max_workers: int = 2, poll_interval: int = 30):
     """Start the global AI processing worker."""
     global _worker_instance
 
-    if _worker_instance and _worker_instance.is_running:
-        logger.warning("AI worker already running")
-        return _worker_instance
-
-    _worker_instance = AIProcessingWorker(max_workers, poll_interval)
-    await _worker_instance.start()
-    return _worker_instance
+    # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
+    logger.warning("AI processing worker is temporarily disabled due to database compatibility issues")
+    return None
 
 
 async def stop_ai_worker():
@@ -341,4 +324,6 @@ async def stop_ai_worker():
 
 def get_ai_worker() -> Optional[AIProcessingWorker]:
     """Get the global AI processing worker instance."""
-    return _worker_instance
+    # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
+    logger.warning("AI processing worker is temporarily disabled - returning None")
+    return None
