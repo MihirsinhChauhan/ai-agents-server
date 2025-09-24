@@ -6,6 +6,7 @@ from app.routes import auth, debt_new, payment_new, ai
 from app.routes.onboarding import router as onboarding_router
 # from app.databases.database import get_supabase  # Not using Supabase
 from app.databases.database import db_manager
+from app.services.ai_processing_worker import start_ai_worker, stop_ai_worker
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -20,6 +21,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:8080",  # Vite frontend
         "http://127.0.0.1:8080",  # Alternative localhost
+        "http://localhost:8081",  # Current Vite frontend port
+        "http://127.0.0.1:8081",  # Alternative localhost
         "http://localhost:3000",  # Alternative frontend port
         "http://127.0.0.1:3000",  # Alternative localhost
     ],
@@ -31,7 +34,7 @@ app.add_middleware(
 # Database startup event
 @app.on_event("startup")
 async def startup_event():
-    """Initialize database connection pool on startup"""
+    """Initialize database connection pool and background services on startup"""
     try:
         await db_manager.create_pool()
         print("✅ Database connection pool initialized successfully")
@@ -39,6 +42,9 @@ async def startup_event():
         print(f"❌ Failed to initialize database: {e}")
         print("⚠️  Continuing without database for debugging...")
         # Don't raise exception for now
+
+    # AI processing worker temporarily disabled due to database compatibility issues
+    print("⚠️  AI processing worker disabled for testing")
 
 # Include routers - Using updated routes with proper models
 try:
@@ -79,6 +85,20 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat()
     }
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on shutdown"""
+    # AI worker disabled - no cleanup needed
+    print("⚠️  AI processing worker was disabled - no cleanup needed")
+
+    try:
+        # Close database connections
+        await db_manager.close_pool()
+        print("✅ Database connection pool closed successfully")
+    except Exception as e:
+        print(f"❌ Error closing database connections: {e}")
 
 
 

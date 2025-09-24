@@ -5,6 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
 from app.databases.database import SupabaseDB, get_db
+from app.database.database import get_db as get_async_db
 from app.dependencies import get_current_active_user, get_blockchain
 from app.models.user import UserInDB
 from app.models.debt import DebtCreate, DebtCreateRequest, DebtResponse, DebtUpdate, DebtSummaryResponse
@@ -12,6 +13,8 @@ from app.repositories.debt_repository import DebtRepository
 from app.repositories.user_repository import UserRepository
 from app.middleware.auth import CurrentUser
 from app.blockchain_interface import BlockchainInterface
+from app.services.ai_insights_cache_service import AIInsightsCacheService
+from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
@@ -23,6 +26,10 @@ async def get_debt_repo(db: SupabaseDB = Depends(get_db)) -> DebtRepository:
 async def get_user_repo(db: SupabaseDB = Depends(get_db)) -> UserRepository:
     """Get user repository instance"""
     return UserRepository(db)
+
+async def get_ai_cache_service(db_session: AsyncSession = Depends(get_async_db)) -> AIInsightsCacheService:
+    """Get AI insights cache service instance"""
+    return AIInsightsCacheService(db_session)
 
 
 @router.get("/", response_model=List[DebtResponse])
@@ -53,7 +60,8 @@ async def create_debt(
     debt_request: DebtCreateRequest,
     current_user: CurrentUser,
     debt_repo: DebtRepository = Depends(get_debt_repo),
-    blockchain: BlockchainInterface = Depends(get_blockchain)
+    blockchain: BlockchainInterface = Depends(get_blockchain),
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> DebtResponse:
     """
     Create a new debt
@@ -102,6 +110,13 @@ async def create_debt(
         except Exception as e:
             # Log blockchain error but don't fail the operation
             print(f"Blockchain storage failed: {e}")
+
+        # Invalidate AI insights cache since debt portfolio has changed
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
 
         return DebtResponse.from_debt_in_db(created_debt)
 
@@ -224,7 +239,8 @@ async def update_debt(
     debt_in: DebtUpdate,
     current_user: CurrentUser,
     debt_repo: DebtRepository = Depends(get_debt_repo),
-    blockchain: BlockchainInterface = Depends(get_blockchain)
+    blockchain: BlockchainInterface = Depends(get_blockchain),
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> DebtResponse:
     """
     Update a debt
@@ -273,6 +289,13 @@ async def update_debt(
             except Exception as e:
                 print(f"Blockchain update failed: {e}")
 
+        # Invalidate AI insights cache since debt portfolio has changed
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
+
         return DebtResponse.from_debt_in_db(updated_debt)
 
     except HTTPException:
@@ -289,7 +312,8 @@ async def delete_debt(
     debt_id: str,
     current_user: CurrentUser,
     debt_repo: DebtRepository = Depends(get_debt_repo),
-    blockchain: BlockchainInterface = Depends(get_blockchain)
+    blockchain: BlockchainInterface = Depends(get_blockchain),
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ) -> DebtResponse:
     """
     Mark a debt as inactive (soft delete)
@@ -332,6 +356,13 @@ async def delete_debt(
             await blockchain.store_debt(blockchain_data)
         except Exception as e:
             print(f"Blockchain delete recording failed: {e}")
+
+        # Invalidate AI insights cache since debt portfolio has changed
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
 
         return DebtResponse.from_debt_in_db(updated_debt)
 
