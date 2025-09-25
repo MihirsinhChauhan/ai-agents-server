@@ -55,16 +55,15 @@ async def safe_invalidate_user_cache(ai_cache_service: AIInsightsCacheService, u
 
 
 # Dependency injection - Fixed to use proper SQLAlchemy session
-async def get_ai_cache_service() -> AIInsightsCacheService:
+async def get_ai_cache_service(
+    session: AsyncSession = Depends(get_async_db_session)
+) -> AIInsightsCacheService:
     """
     Get AI insights cache service instance with proper SQLAlchemy session.
-    This creates a new session specifically for the AI cache service.
+    Uses FastAPI dependency injection for proper session lifecycle management.
     """
     try:
-        # Get SQLAlchemy AsyncSession (not AsyncPG connection)
-        session_gen = get_async_db_session()
-        session = await session_gen.__anext__()
-        logger.debug("Created SQLAlchemy session for AI cache service")
+        logger.debug("Creating AI cache service with injected SQLAlchemy session")
         return AIInsightsCacheService(session)
     except Exception as e:
         logger.error(f"Failed to create AI cache service: {e}")

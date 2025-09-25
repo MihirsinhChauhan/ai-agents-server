@@ -224,19 +224,39 @@ async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
     """
     Dependency function for FastAPI to get SQLAlchemy AsyncSession.
     Used for AI cache service and other SQLAlchemy operations.
+    Handles GeneratorExit properly to prevent session state conflicts.
     """
     if async_session_maker is None:
         init_sqlalchemy()
 
-    async with async_session_maker() as session:
+    session = async_session_maker()
+    try:
+        yield session
+    except GeneratorExit:
+        # Handle FastAPI dependency cleanup gracefully
         try:
-            yield session
-        except Exception as e:
-            logger.error(f"Database session error: {e}")
             await session.rollback()
-            raise
-        finally:
+        except Exception as rollback_error:
+            logger.warning(f"Error during session rollback on GeneratorExit: {rollback_error}")
+        try:
             await session.close()
+        except Exception as close_error:
+            logger.warning(f"Error during session close on GeneratorExit: {close_error}")
+        raise
+    except Exception as e:
+        logger.error(f"Database session error: {e}")
+        try:
+            await session.rollback()
+        except Exception as rollback_error:
+            logger.error(f"Error during rollback: {rollback_error}")
+        raise
+    finally:
+        # Ensure session is properly closed
+        try:
+            if not session.is_closed:
+                await session.close()
+        except Exception as close_error:
+            logger.warning(f"Error during final session close: {close_error}")
 
 
 # Compatibility layer for existing routes expecting SupabaseDB interface

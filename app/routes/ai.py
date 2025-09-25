@@ -12,8 +12,9 @@ from app.services.ai_insights_cache_service import AIInsightsCacheService
 from app.repositories.debt_repository import DebtRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.analytics_repository import AnalyticsRepository
-from app.databases.database import get_db
+from app.databases.database import get_db, get_async_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 from app.models.ai import (
     AIInsightsResponse,
     AIRecommendationResponse,
@@ -30,6 +31,8 @@ from app.models.ai import (
 )
 from app.middleware.auth import CurrentUser
 from app.models.user import UserInDB
+
+logger = logging.getLogger(__name__)
 
 # Dependency injection for repositories
 def get_debt_repository() -> DebtRepository:
@@ -59,10 +62,18 @@ async def get_ai_service(
 
 # Dependency injection for AI insights cache service
 async def get_ai_cache_service(
-    db_session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_async_db_session)
 ) -> AIInsightsCacheService:
-    """Get AI insights cache service instance"""
-    return AIInsightsCacheService(db_session)
+    """
+    Get AI insights cache service instance with proper SQLAlchemy session.
+    Uses FastAPI dependency injection for proper session lifecycle management.
+    """
+    try:
+        logger.debug("Creating AI cache service with injected SQLAlchemy session")
+        return AIInsightsCacheService(session)
+    except Exception as e:
+        logger.error(f"Failed to create AI cache service: {e}")
+        raise
 
 router = APIRouter()
 
