@@ -23,16 +23,52 @@ from app.middleware.auth import CurrentUser
 from app.utils.auth import AuthUtils
 from app.services.ai_service import AIService
 from app.services.ai_insights_cache_service import AIInsightsCacheService
-from app.databases.database import get_db
+from app.databases.database import get_db, get_async_db_session
 from sqlalchemy.ext.asyncio import AsyncSession
+import logging
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
-# Dependency injection
-async def get_ai_cache_service(db_session: AsyncSession = Depends(get_db)) -> AIInsightsCacheService:
-    """Get AI insights cache service instance"""
-    return AIInsightsCacheService(db_session)
+async def safe_invalidate_user_cache(ai_cache_service: AIInsightsCacheService, user_id: str) -> bool:
+    """
+    Safely invalidate user cache without affecting main operation.
+    Isolates cache errors to prevent session corruption.
+    Returns True if successful, False if failed.
+    """
+    try:
+        logger.info(f"[CACHE] Attempting cache invalidation for user {user_id}")
+        success = await ai_cache_service.invalidate_cache_for_user(user_id)
+        if success:
+            logger.info(f"[CACHE] Successfully invalidated cache for user {user_id}")
+            return True
+        else:
+            logger.warning(f"[CACHE] Cache invalidation returned False for user {user_id}")
+            return False
+    except Exception as e:
+        # Log the error with full details but don't propagate it
+        logger.error(f"[CACHE] Cache invalidation failed for user {user_id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[CACHE] Full error traceback:", exc_info=True)
+        # Cache failures should not affect the main operation - return False but continue
+        return False
+
+
+# Dependency injection - Fixed to use proper SQLAlchemy session
+async def get_ai_cache_service() -> AIInsightsCacheService:
+    """
+    Get AI insights cache service instance with proper SQLAlchemy session.
+    This creates a new session specifically for the AI cache service.
+    """
+    try:
+        # Get SQLAlchemy AsyncSession (not AsyncPG connection)
+        session_gen = get_async_db_session()
+        session = await session_gen.__anext__()
+        logger.debug("Created SQLAlchemy session for AI cache service")
+        return AIInsightsCacheService(session)
+    except Exception as e:
+        logger.error(f"Failed to create AI cache service: {e}")
+        raise
 
 
 # Request/Response models
@@ -108,6 +144,8 @@ async def get_user_debts(
         return debt_responses
 
     except Exception as e:
+        logger.error(f"[DEBT] Failed to retrieve debts for user {current_user.id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve debts: {str(e)}"
@@ -124,6 +162,7 @@ async def create_debt(
     Create a new debt for the current user.
     Validates all input data and ensures proper relationships.
     """
+    logger.info(f"[DEBT] Creating debt for user {current_user.id}: {debt_request.name}")
     debt_repo = DebtRepository()
 
     try:
@@ -147,6 +186,7 @@ async def create_debt(
         )
 
         # Create the debt
+        logger.debug(f"[DEBT] Calling repository to create debt for user {current_user.id}")
         new_debt = await debt_repo.create_debt(debt_data)
 
         if not new_debt:
@@ -155,20 +195,26 @@ async def create_debt(
                 detail="Failed to create debt"
             )
 
-        # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
-            pass
+        logger.info(f"[DEBT] Successfully created debt {new_debt.id} for user {current_user.id}")
 
+        # Invalidate AI insights cache since debt portfolio has changed
+        # This is isolated and won't affect the main operation
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id}")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id}")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt creation succeeded")
+
+        logger.info(f"[DEBT] Debt creation completed successfully for user {current_user.id}")
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(new_debt)
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[DEBT] Failed to create debt for user {current_user.id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create debt: {str(e)}"
@@ -215,6 +261,8 @@ async def get_debt_summary(
         )
 
     except Exception as e:
+        logger.error(f"[DEBT] Failed to get debt summary for user {current_user.id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get debt summary: {str(e)}"
@@ -307,12 +355,13 @@ async def update_debt(
             )
 
         # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
-            pass
+        # This is isolated and won't affect the main operation
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after update")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after update")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt update succeeded")
 
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(updated_debt)
@@ -364,16 +413,19 @@ async def delete_debt(
             )
 
         # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
-            pass
+        # This is isolated and won't affect the main operation
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after delete")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after delete")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt deletion succeeded")
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[DEBT] Failed to delete debt for user {current_user.id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete debt: {str(e)}"
@@ -453,12 +505,13 @@ async def record_payment(
         )
 
         # Invalidate AI insights cache since debt balance has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
-            pass
+        # This is isolated and won't affect the main operation
+        logger.debug(f"[PAYMENT] Attempting cache invalidation for user {current_user.id} after payment")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[PAYMENT] Cache invalidation successful for user {current_user.id} after payment")
+        else:
+            logger.warning(f"[PAYMENT] Cache invalidation failed for user {current_user.id}, but payment recording succeeded")
 
         # Convert to frontend-compatible responses
         payment_response = PaymentHistoryResponse.from_payment_in_db(payment)
@@ -474,6 +527,8 @@ async def record_payment(
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"[PAYMENT] Failed to record payment for user {current_user.id}, debt {debt_id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[PAYMENT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to record payment: {str(e)}"
