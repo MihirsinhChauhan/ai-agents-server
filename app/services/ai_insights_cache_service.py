@@ -34,9 +34,34 @@ class AIInsightsCacheService:
     """
 
     def __init__(self, db_session: AsyncSession):
+        """
+        Initialize AI insights cache service with SQLAlchemy session.
+
+        Args:
+            db_session: SQLAlchemy AsyncSession for cache operations only.
+                       This session is completely isolated from main DB operations.
+        """
+        if not isinstance(db_session, AsyncSession):
+            raise TypeError(f"Expected AsyncSession, got {type(db_session)}")
+
         self.db = db_session
-        self.debt_repo = DebtRepository()  # No session required for AsyncPG repository
+        self.debt_repo = DebtRepository()  # Uses AsyncPG for main operations
         self.ai_service = AIService(debt_repo=self.debt_repo, user_repo=None, analytics_repo=None)
+
+        logger.debug("AIInsightsCacheService initialized with SQLAlchemy session")
+
+    async def _check_session_health(self) -> bool:
+        """
+        Check if the SQLAlchemy session is healthy and connected.
+        Returns True if session is healthy, False otherwise.
+        """
+        try:
+            # Simple query to test session health
+            await self.db.execute(select(1))
+            return True
+        except Exception as e:
+            logger.error(f"Session health check failed: {e}")
+            return False
 
     async def get_ai_insights(self, user_id: PyUUID) -> Tuple[Dict[str, Any], bool]:
         """
@@ -149,13 +174,31 @@ class AIInsightsCacheService:
             }
 
     async def invalidate_cache_for_user(self, user_id: PyUUID) -> bool:
-        """Invalidate cache when user's debt portfolio changes."""
+        """
+        Invalidate cache when user's debt portfolio changes.
+        Enhanced with session health checks and error isolation.
+        """
         try:
+            # Check session health before attempting cache operations
+            if not await self._check_session_health():
+                logger.error(f"Session unhealthy, skipping cache invalidation for user {user_id}")
+                return False
+
+            logger.debug(f"Session health check passed for user {user_id}")
             await self._invalidate_cache(user_id)
-            logger.info(f"Cache invalidated for user {user_id}")
+            logger.info(f"Cache invalidated successfully for user {user_id}")
             return True
         except Exception as e:
-            logger.error(f"Error invalidating cache for user {user_id}: {e}")
+            logger.error(f"Error invalidating cache for user {user_id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"Full cache invalidation error:", exc_info=True)
+
+            # Attempt session recovery if possible
+            try:
+                await self.db.rollback()
+                logger.debug(f"Session rolled back successfully for user {user_id}")
+            except Exception as rollback_error:
+                logger.error(f"Failed to rollback session for user {user_id}: {rollback_error}")
+
             return False
 
     async def cleanup_expired_cache(self) -> int:
@@ -412,13 +455,39 @@ class AIInsightsCacheService:
             return None
 
     async def _invalidate_cache(self, user_id: PyUUID):
-        """Invalidate all cache entries for user."""
-        await self.db.execute(
-            delete(AIInsightsCache).where(
-                AIInsightsCache.user_id == user_id
+        """
+        Invalidate all cache entries for user with enhanced error handling.
+        Protected against session corruption.
+        """
+        try:
+            logger.debug(f"Starting cache invalidation for user {user_id}")
+
+            # Use a more explicit delete query with proper type conversion
+            result = await self.db.execute(
+                delete(AIInsightsCache).where(
+                    AIInsightsCache.user_id == str(user_id)  # Ensure string conversion
+                )
             )
-        )
-        await self.db.commit()
+
+            # Only commit if the execute succeeded
+            await self.db.commit()
+
+            deleted_count = result.rowcount if hasattr(result, 'rowcount') else 0
+            logger.debug(f"Cache invalidation completed for user {user_id}, deleted {deleted_count} entries")
+
+        except Exception as e:
+            logger.error(f"Cache invalidation failed for user {user_id}: {type(e).__name__}: {str(e)}")
+            logger.error(f"Full error details: {e}", exc_info=True)
+
+            # Rollback the transaction to prevent corruption
+            try:
+                await self.db.rollback()
+                logger.debug("Transaction rolled back successfully")
+            except Exception as rollback_error:
+                logger.error(f"Failed to rollback transaction: {rollback_error}")
+
+            # Re-raise the original error
+            raise
 
     def _estimate_completion_time(self, processing_job: AIProcessingQueue) -> str:
         """Estimate completion time for processing job."""

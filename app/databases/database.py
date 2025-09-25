@@ -7,6 +7,8 @@ import asyncpg
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
 from app.configs.config import settings
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,45 @@ class DatabaseManager:
 # Global database manager instance
 db_manager = DatabaseManager()
 
+# SQLAlchemy setup for AI cache service
+def get_sqlalchemy_url() -> str:
+    """Get SQLAlchemy-compatible database URL"""
+    if settings.DATABASE_URL:
+        # Convert postgres:// to postgresql+asyncpg://
+        url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
+        return url.replace("postgres://", "postgresql+asyncpg://")
+    else:
+        return (
+            f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}"
+            f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        )
+
+# Create async engine and session maker
+async_engine = None
+async_session_maker = None
+
+def init_sqlalchemy():
+    """Initialize SQLAlchemy engine and session maker"""
+    global async_engine, async_session_maker
+
+    if async_engine is None:
+        sqlalchemy_url = get_sqlalchemy_url()
+        async_engine = create_async_engine(
+            sqlalchemy_url,
+            pool_pre_ping=True,
+            pool_recycle=300,
+            echo=False,  # Set to True for SQL debugging
+        )
+        async_session_maker = async_sessionmaker(
+            async_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+        )
+        logger.info("SQLAlchemy engine initialized successfully")
+
+# Declarative base for SQLAlchemy models
+Base = declarative_base()
+
 
 async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
     """
@@ -157,18 +198,45 @@ async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
 
 async def init_database() -> None:
     """
-    Initialize the database connection pool.
+    Initialize the database connection pool and SQLAlchemy engine.
     Should be called during application startup.
     """
     await db_manager.create_pool()
+    init_sqlalchemy()
+    logger.info("✅ Database connection pool and SQLAlchemy engine initialized successfully")
 
 
 async def close_database() -> None:
     """
-    Close the database connection pool.
+    Close the database connection pool and SQLAlchemy engine.
     Should be called during application shutdown.
     """
+    global async_engine
+
     await db_manager.close_pool()
+
+    if async_engine is not None:
+        await async_engine.dispose()
+        logger.info("SQLAlchemy engine disposed")
+
+
+async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Dependency function for FastAPI to get SQLAlchemy AsyncSession.
+    Used for AI cache service and other SQLAlchemy operations.
+    """
+    if async_session_maker is None:
+        init_sqlalchemy()
+
+    async with async_session_maker() as session:
+        try:
+            yield session
+        except Exception as e:
+            logger.error(f"Database session error: {e}")
+            await session.rollback()
+            raise
+        finally:
+            await session.close()
 
 
 # Compatibility layer for existing routes expecting SupabaseDB interface

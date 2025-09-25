@@ -1,11 +1,11 @@
 from datetime import datetime
 from typing import List, Optional
 import uuid
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 
-from app.databases.database import SupabaseDB, get_db
-from app.database.database import get_db as get_async_db
+from app.databases.database import get_db, get_async_db_session, SupabaseDB
 from app.dependencies import get_current_active_user, get_blockchain
 from app.models.user import UserInDB
 from app.models.debt import DebtCreate, DebtCreateRequest, DebtResponse, DebtUpdate, DebtSummaryResponse
@@ -17,6 +17,30 @@ from app.services.ai_insights_cache_service import AIInsightsCacheService
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+async def safe_invalidate_user_cache(ai_cache_service: AIInsightsCacheService, user_id: str) -> bool:
+    """
+    Safely invalidate user cache without affecting main operation.
+    Isolates cache errors to prevent session corruption.
+    Returns True if successful, False if failed.
+    """
+    try:
+        logger.info(f"[CACHE] Attempting cache invalidation for user {user_id}")
+        success = await ai_cache_service.invalidate_cache_for_user(user_id)
+        if success:
+            logger.info(f"[CACHE] Successfully invalidated cache for user {user_id}")
+            return True
+        else:
+            logger.warning(f"[CACHE] Cache invalidation returned False for user {user_id}")
+            return False
+    except Exception as e:
+        # Log the error with full details but don't propagate it
+        logger.error(f"[CACHE] Cache invalidation failed for user {user_id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[CACHE] Full error traceback:", exc_info=True)
+        # Cache failures should not affect the main operation - return False but continue
+        return False
 
 # Dependency injection for repositories
 async def get_debt_repo(db: SupabaseDB = Depends(get_db)) -> DebtRepository:
@@ -27,7 +51,7 @@ async def get_user_repo(db: SupabaseDB = Depends(get_db)) -> UserRepository:
     """Get user repository instance"""
     return UserRepository(db)
 
-async def get_ai_cache_service(db_session: AsyncSession = Depends(get_async_db)) -> AIInsightsCacheService:
+async def get_ai_cache_service(db_session: AsyncSession = Depends(get_async_db_session)) -> AIInsightsCacheService:
     """Get AI insights cache service instance"""
     return AIInsightsCacheService(db_session)
 
@@ -66,6 +90,8 @@ async def create_debt(
     """
     Create a new debt
     """
+    logger.info(f"[DEBT] Creating debt for user {current_user.id}: {debt_request.name}")
+
     try:
         # Create DebtCreate model with user_id from authenticated user
         debt_in = DebtCreate(
@@ -87,10 +113,13 @@ async def create_debt(
         )
 
         # Create debt using repository
+        logger.debug(f"[DEBT] Calling repository to create debt for user {current_user.id}")
         created_debt = await debt_repo.create_debt(debt_in)
+        logger.info(f"[DEBT] Successfully created debt {created_debt.id} for user {current_user.id}")
 
-        # Store on blockchain (optional)
+        # Store on blockchain (optional) - isolated to prevent main operation failure
         try:
+            logger.debug(f"[BLOCKCHAIN] Attempting to store debt {created_debt.id} on blockchain")
             blockchain_data = {
                 "debt_id": str(created_debt.id),
                 "user_id": str(current_user.id),
@@ -107,20 +136,26 @@ async def create_debt(
             if blockchain_tx:
                 await debt_repo.update_debt(str(created_debt.id), {"blockchain_id": blockchain_tx})
                 created_debt.blockchain_id = blockchain_tx
+                logger.debug(f"[BLOCKCHAIN] Successfully stored debt {created_debt.id} with tx {blockchain_tx}")
         except Exception as e:
             # Log blockchain error but don't fail the operation
-            print(f"Blockchain storage failed: {e}")
+            logger.error(f"[BLOCKCHAIN] Blockchain storage failed for debt {created_debt.id}: {e}")
 
         # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
+        # This is isolated and won't affect the main operation
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id}")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id}")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt creation succeeded")
 
+        logger.info(f"[DEBT] Debt creation completed successfully for user {current_user.id}")
         return DebtResponse.from_debt_in_db(created_debt)
 
     except Exception as e:
+        logger.error(f"[DEBT] Failed to create debt for user {current_user.id}: {type(e).__name__}: {str(e)}")
+        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create debt: {str(e)}"
@@ -287,14 +322,15 @@ async def update_debt(
 
                 await blockchain.store_debt(blockchain_data)
             except Exception as e:
-                print(f"Blockchain update failed: {e}")
+                logger.error(f"[BLOCKCHAIN] Blockchain update failed for debt {debt_id}: {e}")
 
         # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after update")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after update")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt update succeeded")
 
         return DebtResponse.from_debt_in_db(updated_debt)
 
@@ -355,14 +391,15 @@ async def delete_debt(
 
             await blockchain.store_debt(blockchain_data)
         except Exception as e:
-            print(f"Blockchain delete recording failed: {e}")
+            logger.error(f"[BLOCKCHAIN] Blockchain delete recording failed for debt {debt_id}: {e}")
 
         # Invalidate AI insights cache since debt portfolio has changed
-        try:
-            await ai_cache_service.invalidate_cache_for_user(current_user.id)
-        except Exception as e:
-            # Log cache invalidation error but don't fail the operation
-            print(f"Cache invalidation failed: {e}")
+        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after delete")
+        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
+        if cache_success:
+            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after delete")
+        else:
+            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt deletion succeeded")
 
         return DebtResponse.from_debt_in_db(updated_debt)
 
