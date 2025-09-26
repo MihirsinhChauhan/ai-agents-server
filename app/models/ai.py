@@ -82,6 +82,21 @@ class AIErrorResponse(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
 
 
+class AIInsightsStatusResponse(BaseModel):
+    """Response model for AI insights status endpoint"""
+    status: str = Field(..., description="Status: completed, expired, stale, expired_and_stale, processing, queued, not_generated, error")
+    cached: bool = Field(..., description="Whether insights are currently cached and valid")
+    generated_at: Optional[str] = Field(None, description="When insights were generated")
+    expires_at: Optional[str] = Field(None, description="When cached insights expire")
+    processing_time: Optional[float] = Field(None, description="Time taken to generate insights")
+    cache_key_match: Optional[bool] = Field(None, description="Whether cache key matches current debt portfolio")
+    cache_exists: Optional[bool] = Field(None, description="Whether any cache entry exists")
+    started_at: Optional[str] = Field(None, description="When processing started (for processing jobs)")
+    attempts: Optional[int] = Field(None, description="Number of processing attempts")
+    estimated_completion: Optional[str] = Field(None, description="Estimated completion time")
+    message: Optional[str] = Field(None, description="Human readable status message")
+
+
 # New models for enhanced AI Insights functionality
 
 class PaymentTimelineEntry(BaseModel):

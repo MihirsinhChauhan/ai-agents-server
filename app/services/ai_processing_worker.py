@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import selectinload
 
-from app.databases.database import get_db
+from app.databases.database import get_sqlalchemy_session
 from app.models.ai_insights_cache import AIProcessingQueue, AIInsightsCache
 from app.services.ai_service import AIService
 from app.repositories.debt_repository import DebtRepository
@@ -44,9 +44,19 @@ class AIProcessingWorker:
 
     async def start(self):
         """Start the background processing workers."""
-        # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
-        logger.warning("AI processing worker is temporarily disabled - not starting workers")
-        return
+        if self.is_running:
+            logger.warning("AI processing workers are already running")
+            return
+
+        logger.info(f"Starting {self.max_workers} AI processing workers...")
+        self.is_running = True
+
+        # Start worker tasks
+        for i in range(self.max_workers):
+            worker_task = asyncio.create_task(self._worker_loop(i))
+            self.workers.append(worker_task)
+
+        logger.info(f"✅ Started {len(self.workers)} AI processing workers")
 
     async def stop(self):
         """Stop all background workers gracefully."""
@@ -74,8 +84,8 @@ class AIProcessingWorker:
         try:
             while self.is_running:
                 try:
-                    # Get database session
-                    async for db_session in get_db():
+                    # Get SQLAlchemy database session
+                    async for db_session in get_sqlalchemy_session():
                         try:
                             # Process next available job
                             processed = await self._process_next_job(db_session, worker_id)
@@ -189,7 +199,7 @@ class AIProcessingWorker:
 
             # Generate AI insights
             logger.info(f"Worker {worker_id} generating AI insights for user {job.user_id}")
-            ai_insights = await ai_service.generate_insights(job.user_id, include_dti=True)
+            ai_insights = await ai_service.get_ai_insights(user_id=job.user_id, include_dti=True)
 
             processing_time = (datetime.utcnow() - start_time).total_seconds()
 
@@ -308,9 +318,21 @@ async def start_ai_worker(max_workers: int = 2, poll_interval: int = 30):
     """Start the global AI processing worker."""
     global _worker_instance
 
-    # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
-    logger.warning("AI processing worker is temporarily disabled due to database compatibility issues")
-    return None
+    if _worker_instance and _worker_instance.is_running:
+        logger.warning("AI processing worker is already running")
+        return _worker_instance
+
+    logger.info("Initializing AI processing worker...")
+    _worker_instance = AIProcessingWorker(max_workers=max_workers, poll_interval=poll_interval)
+
+    try:
+        await _worker_instance.start()
+        logger.info("✅ AI processing worker started successfully")
+        return _worker_instance
+    except Exception as e:
+        logger.error(f"❌ Failed to start AI processing worker: {e}")
+        _worker_instance = None
+        raise e
 
 
 async def stop_ai_worker():
@@ -324,6 +346,5 @@ async def stop_ai_worker():
 
 def get_ai_worker() -> Optional[AIProcessingWorker]:
     """Get the global AI processing worker instance."""
-    # TEMPORARILY DISABLED: AI worker is disabled due to database compatibility issues
-    logger.warning("AI processing worker is temporarily disabled - returning None")
-    return None
+    global _worker_instance
+    return _worker_instance

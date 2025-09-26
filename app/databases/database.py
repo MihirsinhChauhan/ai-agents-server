@@ -1,13 +1,14 @@
 """
 Database connection and management for DebtEase application.
 Implements connection pooling with AsyncPG as specified in the Backend Implementation Plan.
+Also provides SQLAlchemy async session support for AI cache services.
 """
 
 import asyncpg
 import logging
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator, Optional
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, AsyncEngine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from app.configs.config import settings
 
@@ -19,22 +20,27 @@ class DatabaseManager:
     Database manager class for handling PostgreSQL connections with AsyncPG.
     Implements connection pooling for optimal performance.
     """
-    
+
     def __init__(self):
         self.pool: Optional[asyncpg.Pool] = None
         self._connection_string = self._build_connection_string()
-    
+        self._sqlalchemy_connection_string = self._build_sqlalchemy_connection_string()
+        self.sqlalchemy_engine: Optional[AsyncEngine] = None
+        self.session_factory: Optional[async_sessionmaker] = None
+
     def _build_connection_string(self) -> str:
         """Build the PostgreSQL connection string from settings."""
-        if settings.DATABASE_URL:
-            # Use DATABASE_URL if provided (production)
-            return settings.DATABASE_URL
-        else:
-            # Build from individual components (development)
-            return (
-                f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
-                f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-            )
+        return (
+            f"postgresql://{settings.DB_USER}:{settings.DB_PASSWORD}"
+            f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        )
+
+    def _build_sqlalchemy_connection_string(self) -> str:
+        """Build the async PostgreSQL connection string for SQLAlchemy."""
+        return (
+            f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}"
+            f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
+        )
     
     async def create_pool(self) -> None:
         """
@@ -42,30 +48,50 @@ class DatabaseManager:
         Uses settings from config for pool size and connection parameters.
         """
         try:
-            if settings.DATABASE_URL:
-                # Use DATABASE_URL for production (Render, Heroku, etc.)
-                self.pool = await asyncpg.create_pool(
-                    dsn=settings.DATABASE_URL,
-                    min_size=settings.DB_MIN_SIZE,
-                    max_size=settings.DB_MAX_SIZE,
-                    command_timeout=60,
-                )
-                logger.info(f"Database pool created from DATABASE_URL with {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
-            else:
-                # Use individual connection parameters for development
-                self.pool = await asyncpg.create_pool(
-                    host=settings.DB_HOST,
-                    port=settings.DB_PORT,
-                    user=settings.DB_USER,
-                    password=settings.DB_PASSWORD,
-                    database=settings.DB_NAME,
-                    min_size=settings.DB_MIN_SIZE,
-                    max_size=settings.DB_MAX_SIZE,
-                    command_timeout=60,
-                )
-                logger.info(f"Database pool created with individual params: {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
+            self.pool = await asyncpg.create_pool(
+                host=settings.DB_HOST,
+                port=settings.DB_PORT,
+                user=settings.DB_USER,
+                password=settings.DB_PASSWORD,
+                database=settings.DB_NAME,
+                min_size=settings.DB_MIN_SIZE,
+                max_size=settings.DB_MAX_SIZE,
+                command_timeout=60,
+            )
+            logger.info(f"Database pool created successfully with {settings.DB_MIN_SIZE}-{settings.DB_MAX_SIZE} connections")
         except Exception as e:
             logger.error(f"Failed to create database pool: {e}")
+            raise
+
+    async def create_sqlalchemy_engine(self) -> None:
+        """
+        Create SQLAlchemy async engine and session factory for AI cache services.
+        """
+        try:
+            self.sqlalchemy_engine = create_async_engine(
+                self._sqlalchemy_connection_string,
+                pool_size=settings.DB_MAX_SIZE // 2,  # Use half the pool size for SQLAlchemy
+                max_overflow=settings.DB_MAX_SIZE // 4,
+                pool_timeout=30,
+                echo=False,  # Set to True for SQL debugging
+            )
+
+            self.session_factory = async_sessionmaker(
+                bind=self.sqlalchemy_engine,
+                class_=AsyncSession,
+                autoflush=False,
+                autocommit=False,
+                expire_on_commit=False,
+            )
+
+            # Import SQLAlchemy models to register them with the metadata
+            # This ensures relationships are properly configured
+            from app.models.user_sqlalchemy import User
+            from app.models.ai_insights_cache import AIInsightsCache, AIProcessingQueue
+
+            logger.info("SQLAlchemy async engine created successfully")
+        except Exception as e:
+            logger.error(f"Failed to create SQLAlchemy engine: {e}")
             raise
 
 
@@ -73,10 +99,14 @@ class DatabaseManager:
 # No Supabase dependencies needed
     
     async def close_pool(self) -> None:
-        """Close the connection pool."""
+        """Close the connection pools."""
         if self.pool:
             await self.pool.close()
             logger.info("Database pool closed")
+
+        if self.sqlalchemy_engine:
+            await self.sqlalchemy_engine.dispose()
+            logger.info("SQLAlchemy engine closed")
     
     @asynccontextmanager
     async def get_connection(self) -> AsyncGenerator[asyncpg.Connection, None]:
@@ -92,6 +122,27 @@ class DatabaseManager:
         
         async with self.pool.acquire() as connection:
             yield connection
+
+    @asynccontextmanager
+    async def get_sqlalchemy_session(self) -> AsyncGenerator[AsyncSession, None]:
+        """
+        Get an SQLAlchemy async session using context manager.
+        Automatically handles session lifecycle and rollback on error.
+        """
+        if not self.session_factory:
+            await self.create_sqlalchemy_engine()
+
+        if not self.session_factory:
+            raise RuntimeError("SQLAlchemy session factory is not available")
+
+        async with self.session_factory() as session:
+            try:
+                yield session
+            except Exception:
+                await session.rollback()
+                raise
+            finally:
+                await session.close()
     
     async def test_connection(self) -> bool:
         """
@@ -148,45 +199,6 @@ class DatabaseManager:
 # Global database manager instance
 db_manager = DatabaseManager()
 
-# SQLAlchemy setup for AI cache service
-def get_sqlalchemy_url() -> str:
-    """Get SQLAlchemy-compatible database URL"""
-    if settings.DATABASE_URL:
-        # Convert postgres:// to postgresql+asyncpg://
-        url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
-        return url.replace("postgres://", "postgresql+asyncpg://")
-    else:
-        return (
-            f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}"
-            f"@{settings.DB_HOST}:{settings.DB_PORT}/{settings.DB_NAME}"
-        )
-
-# Create async engine and session maker
-async_engine = None
-async_session_maker = None
-
-def init_sqlalchemy():
-    """Initialize SQLAlchemy engine and session maker"""
-    global async_engine, async_session_maker
-
-    if async_engine is None:
-        sqlalchemy_url = get_sqlalchemy_url()
-        async_engine = create_async_engine(
-            sqlalchemy_url,
-            pool_pre_ping=True,
-            pool_recycle=300,
-            echo=False,  # Set to True for SQL debugging
-        )
-        async_session_maker = async_sessionmaker(
-            async_engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
-        logger.info("SQLAlchemy engine initialized successfully")
-
-# Declarative base for SQLAlchemy models
-Base = declarative_base()
-
 
 async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
     """
@@ -198,65 +210,19 @@ async def get_db_connection() -> AsyncGenerator[asyncpg.Connection, None]:
 
 async def init_database() -> None:
     """
-    Initialize the database connection pool and SQLAlchemy engine.
+    Initialize the database connection pools.
     Should be called during application startup.
     """
     await db_manager.create_pool()
-    init_sqlalchemy()
-    logger.info("✅ Database connection pool and SQLAlchemy engine initialized successfully")
+    await db_manager.create_sqlalchemy_engine()
 
 
 async def close_database() -> None:
     """
-    Close the database connection pool and SQLAlchemy engine.
+    Close the database connection pool.
     Should be called during application shutdown.
     """
-    global async_engine
-
     await db_manager.close_pool()
-
-    if async_engine is not None:
-        await async_engine.dispose()
-        logger.info("SQLAlchemy engine disposed")
-
-
-async def get_async_db_session() -> AsyncGenerator[AsyncSession, None]:
-    """
-    Dependency function for FastAPI to get SQLAlchemy AsyncSession.
-    Used for AI cache service and other SQLAlchemy operations.
-    Handles GeneratorExit properly to prevent session state conflicts.
-    """
-    if async_session_maker is None:
-        init_sqlalchemy()
-
-    session = async_session_maker()
-    try:
-        yield session
-    except GeneratorExit:
-        # Handle FastAPI dependency cleanup gracefully
-        try:
-            await session.rollback()
-        except Exception as rollback_error:
-            logger.warning(f"Error during session rollback on GeneratorExit: {rollback_error}")
-        try:
-            await session.close()
-        except Exception as close_error:
-            logger.warning(f"Error during session close on GeneratorExit: {close_error}")
-        raise
-    except Exception as e:
-        logger.error(f"Database session error: {e}")
-        try:
-            await session.rollback()
-        except Exception as rollback_error:
-            logger.error(f"Error during rollback: {rollback_error}")
-        raise
-    finally:
-        # Ensure session is properly closed
-        try:
-            if not session.is_closed:
-                await session.close()
-        except Exception as close_error:
-            logger.warning(f"Error during final session close: {close_error}")
 
 
 # Compatibility layer for existing routes expecting SupabaseDB interface
@@ -286,4 +252,13 @@ async def get_db():
     """Get database connection for dependency injection."""
     async with db_manager.get_connection() as conn:
         yield conn
+
+
+async def get_sqlalchemy_session() -> AsyncGenerator[AsyncSession, None]:
+    """
+    Dependency function for FastAPI to get SQLAlchemy session.
+    Use this for services that need SQLAlchemy ORM functionality (like AI cache service).
+    """
+    async with db_manager.get_sqlalchemy_session() as session:
+        yield session
 

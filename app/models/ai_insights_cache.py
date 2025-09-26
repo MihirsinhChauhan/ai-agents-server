@@ -47,8 +47,8 @@ class AIInsightsCache(Base):
     ai_model_used = Column(String(100), nullable=True, comment="AI model used for generation")
     error_log = Column(Text, nullable=True, comment="Error details if generation failed")
 
-    # Relationship temporarily removed to avoid import issues
-    # user = relationship("User", back_populates="ai_insights_cache")
+    # Relationship with lazy loading to avoid import issues
+    user = relationship("User", back_populates="ai_insights_cache", lazy="select")
 
     @classmethod
     def generate_cache_key(cls, user_id: PyUUID, debt_data: List[Dict[str, Any]]) -> str:
@@ -143,8 +143,8 @@ class AIProcessingQueue(Base):
     started_at = Column(TIMESTAMP, nullable=True, comment="When processing started")
     completed_at = Column(TIMESTAMP, nullable=True, comment="When processing completed")
 
-    # Relationship temporarily removed to avoid import issues
-    # user = relationship("User")
+    # Relationship with lazy loading to avoid import issues
+    user = relationship("User", back_populates="ai_processing_jobs", lazy="select")
 
     @property
     def processing_time(self) -> Optional[float]:

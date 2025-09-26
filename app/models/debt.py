@@ -141,6 +141,43 @@ class DebtInDB(DebtBase):
     blockchain_id: Optional[str] = None
     is_active: bool = Field(default=True)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert DebtInDB model to dictionary suitable for caching and serialization.
+
+        Handles proper serialization of:
+        - UUIDs to strings
+        - Enums to their values
+        - Dates and datetimes to ISO format or original format
+        - All other fields as-is
+
+        Returns:
+            Dict[str, Any]: Dictionary representation of the debt object
+        """
+        return {
+            'id': str(self.id),
+            'user_id': str(self.user_id),
+            'name': self.name,
+            'debt_type': self.debt_type.value,
+            'principal_amount': self.principal_amount,
+            'current_balance': self.current_balance,
+            'interest_rate': self.interest_rate,
+            'is_variable_rate': self.is_variable_rate,
+            'minimum_payment': self.minimum_payment,
+            'due_date': self.due_date.isoformat() if isinstance(self.due_date, date) else self.due_date,
+            'lender': self.lender,
+            'remaining_term_months': self.remaining_term_months,
+            'is_tax_deductible': self.is_tax_deductible,
+            'payment_frequency': self.payment_frequency.value,
+            'is_high_priority': self.is_high_priority,
+            'notes': self.notes,
+            'source': self.source.value,
+            'created_at': self.created_at.isoformat() if isinstance(self.created_at, datetime) else self.created_at,
+            'updated_at': self.updated_at.isoformat() if isinstance(self.updated_at, datetime) else self.updated_at,
+            'blockchain_id': self.blockchain_id,
+            'is_active': self.is_active
+        }
+
     class Config:
         populate_by_name = True
         arbitrary_types_allowed = True

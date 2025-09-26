@@ -18,34 +18,21 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 
 async def get_session_token(
-    request: Request,
-    session_token: Optional[str] = Cookie(None, alias="session_token"),
     authorization: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme)
 ) -> Optional[str]:
     """
-    Extract session token from cookie or Authorization header.
-    
+    Extract session token from Authorization header (Bearer token only).
+
     Args:
-        request: FastAPI request object
-        session_token: Session token from cookie
         authorization: Authorization header credentials
-        
+
     Returns:
         Session token if found, None otherwise
     """
-    # First try to get token from cookie
-    if session_token:
-        return session_token
-    
-    # Then try Authorization header with Bearer scheme
+    # Only use Authorization header with Bearer scheme
     if authorization and authorization.scheme.lower() == "bearer":
         return authorization.credentials
-    
-    # Finally try custom session header
-    session_header = request.headers.get("X-Session-Token")
-    if session_header:
-        return session_header
-    
+
     return None
 
 

@@ -35,7 +35,6 @@ class PaymentRepository(BaseRepository[PaymentInDB]):
             interest_portion=float(record['interest_portion']) if record['interest_portion'] else None,
             notes=record['notes'],
             status=PaymentStatus(record.get('status', 'confirmed')),
-            extra_details=record.get('extra_details', {}),
             created_at=record['created_at'],
             updated_at=record['updated_at'],
             blockchain_id=record['blockchain_id']
@@ -43,17 +42,22 @@ class PaymentRepository(BaseRepository[PaymentInDB]):
 
     def _model_to_dict(self, model: PaymentInDB) -> Dict[str, Any]:
         """Convert PaymentInDB model to dictionary for database operations"""
+        # Convert string date to date object for database if needed
+        payment_date = model.payment_date
+        if isinstance(payment_date, str):
+            from datetime import datetime
+            payment_date = datetime.strptime(payment_date, '%Y-%m-%d').date()
+
         return {
             'id': str(model.id),
             'debt_id': str(model.debt_id),
             'user_id': str(model.user_id),
             'amount': model.amount,
-            'payment_date': model.payment_date,
+            'payment_date': payment_date,
             'principal_portion': model.principal_portion,
             'interest_portion': model.interest_portion,
             'notes': model.notes,
             'status': model.status.value,
-            'extra_details': model.extra_details,
             'created_at': model.created_at,
             'updated_at': model.updated_at,
             'blockchain_id': model.blockchain_id
@@ -79,7 +83,6 @@ class PaymentRepository(BaseRepository[PaymentInDB]):
             interest_portion=payment_create.interest_portion,
             notes=payment_create.notes,
             status=payment_create.status,
-            extra_details=payment_create.extra_details,
             created_at=datetime.now(),
             updated_at=datetime.now()
         )
@@ -582,7 +585,6 @@ class PaymentRepository(BaseRepository[PaymentInDB]):
                             interest_portion=payment_create.interest_portion,
                             notes=payment_create.notes,
                             status=payment_create.status,
-                            extra_details=payment_create.extra_details,
                             created_at=datetime.now(),
                             updated_at=datetime.now()
                         )

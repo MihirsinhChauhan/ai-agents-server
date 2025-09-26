@@ -426,25 +426,31 @@ class DebtRepository(BaseRepository[DebtInDB]):
         records = await self._fetch_all_with_error_handling(query, str(user_id), f"%{lender}%")
         return [self._record_to_model(record) for record in records]
 
-    async def update_debt(self, debt_id: UUID, debt_update: DebtUpdate) -> Optional[DebtInDB]:
+    async def update_debt(self, debt_id: UUID, debt_update) -> Optional[DebtInDB]:
         """
         Update debt information.
-        
+
         Args:
             debt_id: Debt's ID
-            debt_update: Update data
-            
+            debt_update: Update data (DebtUpdate model or dict)
+
         Returns:
             Updated debt if found, None otherwise
         """
-        update_data = debt_update.model_dump(exclude_unset=True)
-        
+        # Handle both Pydantic model and dict
+        if hasattr(debt_update, 'model_dump'):
+            update_data = debt_update.model_dump(exclude_unset=True)
+        elif isinstance(debt_update, dict):
+            update_data = debt_update
+        else:
+            update_data = dict(debt_update)
+
         # Convert enum values to strings if present
-        if 'debt_type' in update_data:
+        if 'debt_type' in update_data and hasattr(update_data['debt_type'], 'value'):
             update_data['debt_type'] = update_data['debt_type'].value
-        if 'payment_frequency' in update_data:
+        if 'payment_frequency' in update_data and hasattr(update_data['payment_frequency'], 'value'):
             update_data['payment_frequency'] = update_data['payment_frequency'].value
-            
+
         return await self.update(debt_id, update_data)
 
     async def get_tax_deductible_debts(self, user_id: UUID) -> List[DebtInDB]:

@@ -23,51 +23,16 @@ from app.middleware.auth import CurrentUser
 from app.utils.auth import AuthUtils
 from app.services.ai_service import AIService
 from app.services.ai_insights_cache_service import AIInsightsCacheService
-from app.databases.database import get_db, get_async_db_session
+from app.databases.database import get_db, get_sqlalchemy_session
 from sqlalchemy.ext.asyncio import AsyncSession
-import logging
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
 
 
-async def safe_invalidate_user_cache(ai_cache_service: AIInsightsCacheService, user_id: str) -> bool:
-    """
-    Safely invalidate user cache without affecting main operation.
-    Isolates cache errors to prevent session corruption.
-    Returns True if successful, False if failed.
-    """
-    try:
-        logger.info(f"[CACHE] Attempting cache invalidation for user {user_id}")
-        success = await ai_cache_service.invalidate_cache_for_user(user_id)
-        if success:
-            logger.info(f"[CACHE] Successfully invalidated cache for user {user_id}")
-            return True
-        else:
-            logger.warning(f"[CACHE] Cache invalidation returned False for user {user_id}")
-            return False
-    except Exception as e:
-        # Log the error with full details but don't propagate it
-        logger.error(f"[CACHE] Cache invalidation failed for user {user_id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[CACHE] Full error traceback:", exc_info=True)
-        # Cache failures should not affect the main operation - return False but continue
-        return False
-
-
-# Dependency injection - Fixed to use proper SQLAlchemy session
-async def get_ai_cache_service(
-    session: AsyncSession = Depends(get_async_db_session)
-) -> AIInsightsCacheService:
-    """
-    Get AI insights cache service instance with proper SQLAlchemy session.
-    Uses FastAPI dependency injection for proper session lifecycle management.
-    """
-    try:
-        logger.debug("Creating AI cache service with injected SQLAlchemy session")
-        return AIInsightsCacheService(session)
-    except Exception as e:
-        logger.error(f"Failed to create AI cache service: {e}")
-        raise
+# Dependency injection
+async def get_ai_cache_service(db_session: AsyncSession = Depends(get_sqlalchemy_session)) -> AIInsightsCacheService:
+    """Get AI insights cache service instance"""
+    return AIInsightsCacheService(db_session)
 
 
 # Request/Response models
@@ -143,8 +108,6 @@ async def get_user_debts(
         return debt_responses
 
     except Exception as e:
-        logger.error(f"[DEBT] Failed to retrieve debts for user {current_user.id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve debts: {str(e)}"
@@ -161,7 +124,6 @@ async def create_debt(
     Create a new debt for the current user.
     Validates all input data and ensures proper relationships.
     """
-    logger.info(f"[DEBT] Creating debt for user {current_user.id}: {debt_request.name}")
     debt_repo = DebtRepository()
 
     try:
@@ -185,7 +147,6 @@ async def create_debt(
         )
 
         # Create the debt
-        logger.debug(f"[DEBT] Calling repository to create debt for user {current_user.id}")
         new_debt = await debt_repo.create_debt(debt_data)
 
         if not new_debt:
@@ -194,26 +155,20 @@ async def create_debt(
                 detail="Failed to create debt"
             )
 
-        logger.info(f"[DEBT] Successfully created debt {new_debt.id} for user {current_user.id}")
-
         # Invalidate AI insights cache since debt portfolio has changed
-        # This is isolated and won't affect the main operation
-        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id}")
-        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
-        if cache_success:
-            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id}")
-        else:
-            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt creation succeeded")
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
+            pass
 
-        logger.info(f"[DEBT] Debt creation completed successfully for user {current_user.id}")
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(new_debt)
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DEBT] Failed to create debt for user {current_user.id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to create debt: {str(e)}"
@@ -260,11 +215,57 @@ async def get_debt_summary(
         )
 
     except Exception as e:
-        logger.error(f"[DEBT] Failed to get debt summary for user {current_user.id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get debt summary: {str(e)}"
+        )
+
+
+@router.get("/reminders", response_model=List[Dict[str, Any]])
+async def get_payment_reminders(
+    current_user: CurrentUser,
+    days_ahead: int = Query(7, description="Number of days to look ahead for reminders")
+) -> List[Dict[str, Any]]:
+    """
+    Get payment reminders for upcoming due dates.
+    """
+    debt_repo = DebtRepository()
+
+    try:
+        # Get active debts
+        debts = await debt_repo.get_user_debts(current_user.id, include_inactive=False)
+
+        # Find debts with due dates within the specified period
+        today = date.today()
+        cutoff_date = today + timedelta(days=days_ahead)
+
+        reminders = []
+        for debt in debts:
+            if debt.due_date:
+                due_date = debt.due_date
+                if today <= due_date <= cutoff_date:
+                    days_until_due = (due_date - today).days
+
+                    reminder = {
+                        "debt_id": str(debt.id),
+                        "debt_name": debt.name,
+                        "lender": debt.lender,
+                        "due_date": debt.due_date,
+                        "minimum_payment": debt.minimum_payment,
+                        "days_until_due": days_until_due,
+                        "urgency": "overdue" if days_until_due < 0 else "due_soon" if days_until_due <= 3 else "upcoming"
+                    }
+                    reminders.append(reminder)
+
+        # Sort by due date (soonest first)
+        reminders.sort(key=lambda x: x["due_date"])
+
+        return reminders
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get payment reminders: {str(e)}"
         )
 
 
@@ -344,8 +345,20 @@ async def update_debt(
                 detail="Not authorized to update this debt"
             )
 
-        # Update the debt
-        updated_debt = await debt_repo.update_debt(debt_id, debt_update.model_dump(exclude_unset=True))
+        # Update the debt - Handle both dict and Pydantic model cases
+        try:
+            if hasattr(debt_update, 'model_dump'):
+                update_data = debt_update.model_dump(exclude_unset=True)
+            elif hasattr(debt_update, 'dict'):
+                update_data = debt_update.dict(exclude_unset=True)
+            else:
+                # If debt_update is already a dict, use it directly
+                update_data = debt_update if isinstance(debt_update, dict) else dict(debt_update)
+        except AttributeError:
+            # Fallback for any edge cases
+            update_data = debt_update if isinstance(debt_update, dict) else dict(debt_update)
+
+        updated_debt = await debt_repo.update_debt(debt_id, update_data)
 
         if not updated_debt:
             raise HTTPException(
@@ -354,13 +367,12 @@ async def update_debt(
             )
 
         # Invalidate AI insights cache since debt portfolio has changed
-        # This is isolated and won't affect the main operation
-        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after update")
-        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
-        if cache_success:
-            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after update")
-        else:
-            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt update succeeded")
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
+            pass
 
         # Return frontend-compatible response
         return DebtResponse.from_debt_in_db(updated_debt)
@@ -412,19 +424,16 @@ async def delete_debt(
             )
 
         # Invalidate AI insights cache since debt portfolio has changed
-        # This is isolated and won't affect the main operation
-        logger.debug(f"[DEBT] Attempting cache invalidation for user {current_user.id} after delete")
-        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
-        if cache_success:
-            logger.debug(f"[DEBT] Cache invalidation successful for user {current_user.id} after delete")
-        else:
-            logger.warning(f"[DEBT] Cache invalidation failed for user {current_user.id}, but debt deletion succeeded")
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
+            pass
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[DEBT] Failed to delete debt for user {current_user.id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[DEBT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete debt: {str(e)}"
@@ -504,13 +513,12 @@ async def record_payment(
         )
 
         # Invalidate AI insights cache since debt balance has changed
-        # This is isolated and won't affect the main operation
-        logger.debug(f"[PAYMENT] Attempting cache invalidation for user {current_user.id} after payment")
-        cache_success = await safe_invalidate_user_cache(ai_cache_service, current_user.id)
-        if cache_success:
-            logger.debug(f"[PAYMENT] Cache invalidation successful for user {current_user.id} after payment")
-        else:
-            logger.warning(f"[PAYMENT] Cache invalidation failed for user {current_user.id}, but payment recording succeeded")
+        try:
+            await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        except Exception as e:
+            # Log cache invalidation error but don't fail the operation
+            print(f"Cache invalidation failed: {e}")
+            pass
 
         # Convert to frontend-compatible responses
         payment_response = PaymentHistoryResponse.from_payment_in_db(payment)
@@ -526,82 +534,13 @@ async def record_payment(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"[PAYMENT] Failed to record payment for user {current_user.id}, debt {debt_id}: {type(e).__name__}: {str(e)}")
-        logger.error(f"[PAYMENT] Full error traceback:", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to record payment: {str(e)}"
         )
 
 
-@router.get("/reminders", response_model=List[Dict[str, Any]])
-async def get_payment_reminders(
-    current_user: CurrentUser,
-    days_ahead: int = Query(7, description="Number of days to look ahead for reminders")
-) -> List[Dict[str, Any]]:
-    """
-    Get payment reminders for upcoming due dates.
-    """
-    debt_repo = DebtRepository()
 
-    try:
-        # Get active debts
-        debts = await debt_repo.get_user_debts(current_user.id, include_inactive=False)
-
-        # Find debts with due dates within the specified period
-        today = date.today()
-        cutoff_date = today + timedelta(days=days_ahead)
-
-        reminders = []
-        for debt in debts:
-            if debt.due_date:
-                due_date = debt.due_date
-                if today <= due_date <= cutoff_date:
-                    days_until_due = (due_date - today).days
-
-                    reminder = {
-                        "debt_id": str(debt.id),
-                        "debt_name": debt.name,
-                        "lender": debt.lender,
-                        "due_date": debt.due_date,
-                        "minimum_payment": debt.minimum_payment,
-                        "days_until_due": days_until_due,
-                        "urgency": "overdue" if days_until_due < 0 else "due_soon" if days_until_due <= 3 else "upcoming"
-                    }
-                    reminders.append(reminder)
-
-        # Sort by due date (soonest first)
-        reminders.sort(key=lambda x: x["due_date"])
-
-        return reminders
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get payment reminders: {str(e)}"
-        )
-
-
-@router.get("/high-priority", response_model=List[DebtResponse])
-async def get_high_priority_debts(
-    current_user: CurrentUser
-) -> List[DebtResponse]:
-    """
-    Get all high priority debts for the user.
-    """
-    debt_repo = DebtRepository()
-
-    try:
-        debts = await debt_repo.get_high_priority_debts(current_user.id)
-        debt_responses = [DebtResponse.from_debt_in_db(debt) for debt in debts]
-
-        return debt_responses
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get high priority debts: {str(e)}"
-        )
 
 
 async def _generate_celebration_data(

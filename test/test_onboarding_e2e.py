@@ -481,6 +481,7 @@ class TestOnboardingE2E:
 
 
 
+<<<<<<< HEAD
 
 
 
@@ -489,3 +490,5 @@ class TestOnboardingE2E:
 
 
 
+=======
+>>>>>>> staging

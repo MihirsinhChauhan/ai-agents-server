@@ -17,7 +17,7 @@ app = FastAPI(
 
 # Add CORS middleware to allow frontend access
 cors_origins = [
-    "http://localhost:8080",  # Vite frontend development
+    "http://localhost:8080",  # Vite frontend
     "http://127.0.0.1:8080",  # Alternative localhost
     "http://localhost:8081",  # Current Vite frontend port
     "http://127.0.0.1:8081",  # Alternative localhost
@@ -25,10 +25,9 @@ cors_origins = [
     "http://127.0.0.1:3000",  # Alternative localhost
 ]
 
-# Add production origins based on environment
-if settings.ENVIRONMENT == "production":
-    # Allow all Vercel app domains and common production domains
-    cors_origins = ["*"]  # In production, you should specify exact domains for security
+# Add production origins if available
+if hasattr(settings, 'CORS_ORIGINS') and settings.CORS_ORIGINS:
+    cors_origins.extend(settings.CORS_ORIGINS.split(','))
 
 app.add_middleware(
     CORSMiddleware,
@@ -47,11 +46,31 @@ async def startup_event():
         print("✅ Database connection pool initialized successfully")
     except Exception as e:
         print(f"❌ Failed to initialize database: {e}")
-        print("⚠️  Continuing without database for debugging...")
-        # Don't raise exception for now
+        # In production, this should fail fast
+        if settings.ENVIRONMENT == "production":
+            raise e
+        else:
+            print("⚠️  Continuing without database in development mode...")
 
-    # AI processing worker temporarily disabled due to database compatibility issues
-    print("⚠️  AI processing worker disabled for testing")
+    # Initialize SQLAlchemy engine for AI cache service
+    try:
+        await db_manager.create_sqlalchemy_engine()
+        print("✅ SQLAlchemy engine initialized successfully")
+    except Exception as e:
+        print(f"❌ Failed to initialize SQLAlchemy engine: {e}")
+        if settings.ENVIRONMENT == "production":
+            raise e
+
+    # Start AI processing worker
+    try:
+        await start_ai_worker(max_workers=2, poll_interval=30)
+        print("✅ AI processing worker started successfully")
+    except Exception as e:
+        print(f"⚠️  Failed to start AI processing worker: {e}")
+        if settings.ENVIRONMENT == "production":
+            raise e
+        else:
+            print("⚠️  Continuing without AI worker in development mode...")
 
 # Include routers - Using updated routes with proper models
 try:
@@ -97,8 +116,12 @@ async def health_check():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Clean up resources on shutdown"""
-    # AI worker disabled - no cleanup needed
-    print("⚠️  AI processing worker was disabled - no cleanup needed")
+    # Stop AI processing worker
+    try:
+        await stop_ai_worker()
+        print("✅ AI processing worker stopped successfully")
+    except Exception as e:
+        print(f"⚠️  Error stopping AI processing worker: {e}")
 
     try:
         # Close database connections
