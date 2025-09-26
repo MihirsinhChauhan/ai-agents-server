@@ -1,13 +1,13 @@
 from datetime import datetime, date
 from enum import Enum
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, computed_field
 from uuid import UUID, uuid4
 
 
 class PaymentStatus(str, Enum):
     PENDING = "pending"
-    CONFIRMED = "confirmed"
+    CONFIRMED = "completed"  # Changed to match database constraint
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -16,22 +16,25 @@ class PaymentBase(BaseModel):
     """Base payment model with core fields"""
     debt_id: UUID = Field(..., description="ID of the debt this payment is for")
     amount: float = Field(..., gt=0, description="Payment amount")
-    payment_date: str = Field(..., pattern=r'^\d{4}-\d{2}-\d{2}$', description="Payment date in YYYY-MM-DD format")
+    payment_date: Union[str, date] = Field(..., description="Payment date in YYYY-MM-DD format")
     principal_portion: Optional[float] = Field(None, ge=0, description="Portion that goes to principal")
     interest_portion: Optional[float] = Field(None, ge=0, description="Portion that goes to interest")
     notes: Optional[str] = Field(None, max_length=1000, description="Additional notes about the payment")
     status: PaymentStatus = Field(default=PaymentStatus.CONFIRMED, description="Payment status")
-    extra_details: Dict[str, Any] = Field(default_factory=dict, description="Additional payment details")
 
     @field_validator('payment_date')
     @classmethod
-    def validate_payment_date(cls, v: str) -> str:
+    def validate_payment_date(cls, v: Union[str, date]) -> Union[str, date]:
         """Validate payment date format"""
-        try:
-            datetime.strptime(v, '%Y-%m-%d')
-        except ValueError:
-            raise ValueError("Payment date must be in YYYY-MM-DD format")
-        return v
+        if isinstance(v, date):
+            return v
+        if isinstance(v, str):
+            try:
+                datetime.strptime(v, '%Y-%m-%d')
+                return v
+            except ValueError:
+                raise ValueError("Payment date must be in YYYY-MM-DD format")
+        raise ValueError("Payment date must be a string in YYYY-MM-DD format or date object")
 
     @field_validator('principal_portion', 'interest_portion')
     @classmethod
@@ -51,20 +54,23 @@ class PaymentCreate(BaseModel):
     interest_portion: Optional[float] = Field(None, ge=0, description="Portion that goes to interest")
     notes: Optional[str] = Field(None, max_length=1000, description="Additional notes about the payment")
     status: PaymentStatus = Field(default=PaymentStatus.CONFIRMED, description="Payment status")
-    extra_details: Dict[str, Any] = Field(default_factory=dict, description="Additional payment details")
     
     # Internal field
     user_id: UUID
 
     @field_validator('payment_date')
     @classmethod
-    def validate_payment_date(cls, v: str) -> str:
+    def validate_payment_date(cls, v: Union[str, date]) -> Union[str, date]:
         """Validate payment date format"""
-        try:
-            datetime.strptime(v, '%Y-%m-%d')
-        except ValueError:
-            raise ValueError("Payment date must be in YYYY-MM-DD format")
-        return v
+        if isinstance(v, date):
+            return v
+        if isinstance(v, str):
+            try:
+                datetime.strptime(v, '%Y-%m-%d')
+                return v
+            except ValueError:
+                raise ValueError("Payment date must be in YYYY-MM-DD format")
+        raise ValueError("Payment date must be a string in YYYY-MM-DD format or date object")
 
 
 class PaymentInDB(PaymentBase):
@@ -99,11 +105,16 @@ class PaymentHistoryResponse(BaseModel):
     @classmethod
     def from_payment_in_db(cls, payment: PaymentInDB) -> "PaymentHistoryResponse":
         """Convert PaymentInDB to PaymentHistoryResponse"""
+        # Convert date back to string format for API response
+        payment_date = payment.payment_date
+        if isinstance(payment_date, date):
+            payment_date = payment_date.strftime('%Y-%m-%d')
+
         return cls(
             id=str(payment.id),
             debt_id=str(payment.debt_id),
             amount=payment.amount,
-            payment_date=payment.payment_date,
+            payment_date=payment_date,
             principal_portion=payment.principal_portion,
             interest_portion=payment.interest_portion,
             notes=payment.notes
@@ -118,7 +129,6 @@ class PaymentUpdate(BaseModel):
     interest_portion: Optional[float] = Field(None, ge=0)
     status: Optional[PaymentStatus] = None
     notes: Optional[str] = Field(None, max_length=1000)
-    extra_details: Optional[Dict[str, Any]] = None
 
     @field_validator('payment_date')
     @classmethod

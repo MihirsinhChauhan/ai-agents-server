@@ -115,8 +115,7 @@ async def register(
         }
     )
     
-    # Set session cookie
-    create_session_cookie(session_token, response)
+    # Note: Using Bearer token authentication only (no cookies)
     
     # Log registration
     await AuthMiddleware.log_authentication_attempt(
@@ -138,7 +137,6 @@ async def register(
 @router.post("/login", response_model=AuthResponse)
 async def login(
     credentials: LoginRequest,
-    response: Response = None,
     request: Request = None
 ) -> Any:
     """
@@ -182,9 +180,7 @@ async def login(
         }
     )
 
-    # Set session cookie (only if response is provided)
-    if response:
-        create_session_cookie(session_token, response)
+    # Note: Using Bearer token authentication only (no cookies)
 
     # Log successful login
     await AuthMiddleware.log_authentication_attempt(
@@ -250,6 +246,8 @@ async def login_form(
                 'is_verified': user.is_verified
             }
         )
+
+        # Note: Using Bearer token authentication only (no cookies)
 
         # Log successful login
         await AuthMiddleware.log_authentication_attempt(

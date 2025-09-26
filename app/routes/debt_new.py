@@ -221,6 +221,54 @@ async def get_debt_summary(
         )
 
 
+@router.get("/reminders", response_model=List[Dict[str, Any]])
+async def get_payment_reminders(
+    current_user: CurrentUser,
+    days_ahead: int = Query(7, description="Number of days to look ahead for reminders")
+) -> List[Dict[str, Any]]:
+    """
+    Get payment reminders for upcoming due dates.
+    """
+    debt_repo = DebtRepository()
+
+    try:
+        # Get active debts
+        debts = await debt_repo.get_user_debts(current_user.id, include_inactive=False)
+
+        # Find debts with due dates within the specified period
+        today = date.today()
+        cutoff_date = today + timedelta(days=days_ahead)
+
+        reminders = []
+        for debt in debts:
+            if debt.due_date:
+                due_date = debt.due_date
+                if today <= due_date <= cutoff_date:
+                    days_until_due = (due_date - today).days
+
+                    reminder = {
+                        "debt_id": str(debt.id),
+                        "debt_name": debt.name,
+                        "lender": debt.lender,
+                        "due_date": debt.due_date,
+                        "minimum_payment": debt.minimum_payment,
+                        "days_until_due": days_until_due,
+                        "urgency": "overdue" if days_until_due < 0 else "due_soon" if days_until_due <= 3 else "upcoming"
+                    }
+                    reminders.append(reminder)
+
+        # Sort by due date (soonest first)
+        reminders.sort(key=lambda x: x["due_date"])
+
+        return reminders
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get payment reminders: {str(e)}"
+        )
+
+
 @router.get("/{debt_id}", response_model=DebtResponse)
 async def get_debt(
     debt_id: UUID,
@@ -297,8 +345,20 @@ async def update_debt(
                 detail="Not authorized to update this debt"
             )
 
-        # Update the debt
-        updated_debt = await debt_repo.update_debt(debt_id, debt_update.model_dump(exclude_unset=True))
+        # Update the debt - Handle both dict and Pydantic model cases
+        try:
+            if hasattr(debt_update, 'model_dump'):
+                update_data = debt_update.model_dump(exclude_unset=True)
+            elif hasattr(debt_update, 'dict'):
+                update_data = debt_update.dict(exclude_unset=True)
+            else:
+                # If debt_update is already a dict, use it directly
+                update_data = debt_update if isinstance(debt_update, dict) else dict(debt_update)
+        except AttributeError:
+            # Fallback for any edge cases
+            update_data = debt_update if isinstance(debt_update, dict) else dict(debt_update)
+
+        updated_debt = await debt_repo.update_debt(debt_id, update_data)
 
         if not updated_debt:
             raise HTTPException(
@@ -480,74 +540,7 @@ async def record_payment(
         )
 
 
-@router.get("/reminders", response_model=List[Dict[str, Any]])
-async def get_payment_reminders(
-    current_user: CurrentUser,
-    days_ahead: int = Query(7, description="Number of days to look ahead for reminders")
-) -> List[Dict[str, Any]]:
-    """
-    Get payment reminders for upcoming due dates.
-    """
-    debt_repo = DebtRepository()
 
-    try:
-        # Get active debts
-        debts = await debt_repo.get_user_debts(current_user.id, include_inactive=False)
-
-        # Find debts with due dates within the specified period
-        today = date.today()
-        cutoff_date = today + timedelta(days=days_ahead)
-
-        reminders = []
-        for debt in debts:
-            if debt.due_date:
-                due_date = debt.due_date
-                if today <= due_date <= cutoff_date:
-                    days_until_due = (due_date - today).days
-
-                    reminder = {
-                        "debt_id": str(debt.id),
-                        "debt_name": debt.name,
-                        "lender": debt.lender,
-                        "due_date": debt.due_date,
-                        "minimum_payment": debt.minimum_payment,
-                        "days_until_due": days_until_due,
-                        "urgency": "overdue" if days_until_due < 0 else "due_soon" if days_until_due <= 3 else "upcoming"
-                    }
-                    reminders.append(reminder)
-
-        # Sort by due date (soonest first)
-        reminders.sort(key=lambda x: x["due_date"])
-
-        return reminders
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get payment reminders: {str(e)}"
-        )
-
-
-@router.get("/high-priority", response_model=List[DebtResponse])
-async def get_high_priority_debts(
-    current_user: CurrentUser
-) -> List[DebtResponse]:
-    """
-    Get all high priority debts for the user.
-    """
-    debt_repo = DebtRepository()
-
-    try:
-        debts = await debt_repo.get_high_priority_debts(current_user.id)
-        debt_responses = [DebtResponse.from_debt_in_db(debt) for debt in debts]
-
-        return debt_responses
-
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to get high priority debts: {str(e)}"
-        )
 
 
 async def _generate_celebration_data(
