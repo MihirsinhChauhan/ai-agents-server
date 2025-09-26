@@ -110,6 +110,12 @@ class DatabaseManager:
             # This ensures relationships are properly configured
             from app.models.user_sqlalchemy import User
             from app.models.ai_insights_cache import AIInsightsCache, AIProcessingQueue
+            from app.models.base import Base
+
+            # Create all tables if they don't exist
+            async with self.sqlalchemy_engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+                logger.info("SQLAlchemy tables created successfully")
 
             logger.info("SQLAlchemy async engine created successfully")
         except Exception as e:

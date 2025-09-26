@@ -61,16 +61,15 @@ async def startup_event():
         if settings.ENVIRONMENT == "production":
             raise e
 
-    # Start AI processing worker
+    # Start AI processing worker (only after SQLAlchemy tables are ready)
     try:
         await start_ai_worker(max_workers=2, poll_interval=30)
         print("✅ AI processing worker started successfully")
     except Exception as e:
         print(f"⚠️  Failed to start AI processing worker: {e}")
-        if settings.ENVIRONMENT == "production":
-            raise e
-        else:
-            print("⚠️  Continuing without AI worker in development mode...")
+        # In production, log the error but don't crash the entire app
+        # The worker will be retried and tables should be created by now
+        print("⚠️  Continuing without AI worker - it can be restarted once tables are ready")
 
 # Include routers - Using updated routes with proper models
 try:
