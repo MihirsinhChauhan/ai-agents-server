@@ -265,6 +265,7 @@ async def login_form(
         return {
             "access_token": session_token,
             "token_type": "bearer",
+            "expires_in": 86400,  # 24 hours in seconds
             "user": {
                 "id": str(user.id),
                 "email": user.email,

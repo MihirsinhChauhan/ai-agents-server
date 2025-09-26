@@ -357,7 +357,7 @@ class AIInsightsCacheService:
 
         try:
             # Generate AI insights
-            ai_insights = await self.ai_service.generate_insights(user_id, include_dti=True)
+            ai_insights = await self.ai_service.get_ai_insights(user_id=user_id, include_dti=True)
             processing_time = (datetime.utcnow() - start_time).total_seconds()
 
             # Cache the results

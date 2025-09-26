@@ -23,14 +23,14 @@ from app.middleware.auth import CurrentUser
 from app.utils.auth import AuthUtils
 from app.services.ai_service import AIService
 from app.services.ai_insights_cache_service import AIInsightsCacheService
-from app.databases.database import get_db
+from app.databases.database import get_db, get_sqlalchemy_session
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = APIRouter()
 
 
 # Dependency injection
-async def get_ai_cache_service(db_session: AsyncSession = Depends(get_db)) -> AIInsightsCacheService:
+async def get_ai_cache_service(db_session: AsyncSession = Depends(get_sqlalchemy_session)) -> AIInsightsCacheService:
     """Get AI insights cache service instance"""
     return AIInsightsCacheService(db_session)
 

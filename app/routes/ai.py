@@ -12,7 +12,7 @@ from app.services.ai_insights_cache_service import AIInsightsCacheService
 from app.repositories.debt_repository import DebtRepository
 from app.repositories.user_repository import UserRepository
 from app.repositories.analytics_repository import AnalyticsRepository
-from app.databases.database import get_db
+from app.databases.database import get_db, get_sqlalchemy_session, db_manager
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ai import (
     AIInsightsResponse,
@@ -59,7 +59,7 @@ async def get_ai_service(
 
 # Dependency injection for AI insights cache service
 async def get_ai_cache_service(
-    db_session: AsyncSession = Depends(get_db)
+    db_session: AsyncSession = Depends(get_sqlalchemy_session)
 ) -> AIInsightsCacheService:
     """Get AI insights cache service instance"""
     return AIInsightsCacheService(db_session)
@@ -1036,13 +1036,9 @@ async def get_queue_status(
             }
 
         # Get database session for queue status
-        from app.databases.database import get_db
-        async for db_session in get_db():
-            try:
-                status = await worker.get_queue_status(db_session)
-                return status
-            finally:
-                await db_session.close()
+        async with db_manager.get_sqlalchemy_session() as db_session:
+            status = await worker.get_queue_status(db_session)
+            return status
 
     except Exception as e:
         import logging
@@ -1078,15 +1074,12 @@ async def cleanup_stale_jobs(
             }
 
         # Get database session for cleanup
-        async for db_session in get_db():
-            try:
-                cleaned_count = await worker.cleanup_stale_jobs(db_session, hours)
-                return {
-                    "message": f"Cleaned up {cleaned_count} stale jobs",
-                    "cleaned_count": cleaned_count
-                }
-            finally:
-                await db_session.close()
+        async with db_manager.get_sqlalchemy_session() as db_session:
+            cleaned_count = await worker.cleanup_stale_jobs(db_session, hours)
+            return {
+                "message": f"Cleaned up {cleaned_count} stale jobs",
+                "cleaned_count": cleaned_count
+            }
 
     except Exception as e:
         import logging
