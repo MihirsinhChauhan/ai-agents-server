@@ -5,6 +5,7 @@ Provides password hashing, session management, and authentication helpers.
 
 import os
 import secrets
+import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from passlib.context import CryptContext
@@ -27,28 +28,39 @@ class AuthUtils:
     @staticmethod
     def hash_password(password: str) -> str:
         """
-        Hash a password using bcrypt.
-        
+        Hash a password using bcrypt with SHA-256 pre-hashing for long passwords.
+
+        For passwords longer than 72 bytes, we first hash with SHA-256 to ensure
+        compatibility with bcrypt while maintaining security.
+
         Args:
             password: Plain text password
-            
+
         Returns:
             Hashed password string
         """
+        # If password is longer than 72 bytes, pre-hash with SHA-256
+        if len(password.encode('utf-8')) > 72:
+            password = hashlib.sha256(password.encode('utf-8')).hexdigest()
+
         return pwd_context.hash(password)
     
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
         """
-        Verify a password against its hash.
-        
+        Verify a password against its hash with SHA-256 pre-hashing for long passwords.
+
         Args:
             plain_password: Plain text password to verify
             hashed_password: Stored password hash
-            
+
         Returns:
             True if password matches, False otherwise
         """
+        # If password is longer than 72 bytes, pre-hash with SHA-256 (same as in hash_password)
+        if len(plain_password.encode('utf-8')) > 72:
+            plain_password = hashlib.sha256(plain_password.encode('utf-8')).hexdigest()
+
         return pwd_context.verify(plain_password, hashed_password)
     
     @staticmethod
@@ -274,16 +286,19 @@ class AuthUtils:
     def validate_password_strength(password: str) -> Dict[str, Any]:
         """
         Validate password strength and return requirements.
-        
+
         Args:
             password: Password to validate
-            
+
         Returns:
             Dictionary with validation results
         """
+        password_bytes = len(password.encode('utf-8'))
+
         result = {
             'is_valid': True,
             'errors': [],
+            'warnings': [],
             'requirements': {
                 'min_length': len(password) >= 8,
                 'has_uppercase': any(c.isupper() for c in password),
@@ -292,28 +307,30 @@ class AuthUtils:
                 'has_special': any(c in '!@#$%^&*()_+-=[]{}|;:,.<>?' for c in password)
             }
         }
-        
+
         # Check each requirement
         if not result['requirements']['min_length']:
             result['errors'].append('Password must be at least 8 characters long')
             result['is_valid'] = False
-        
+
         if not result['requirements']['has_uppercase']:
             result['errors'].append('Password must contain at least one uppercase letter')
             result['is_valid'] = False
-        
+
         if not result['requirements']['has_lowercase']:
             result['errors'].append('Password must contain at least one lowercase letter')
             result['is_valid'] = False
-        
+
         if not result['requirements']['has_digit']:
             result['errors'].append('Password must contain at least one digit')
             result['is_valid'] = False
-        
+
         # Special character is optional but recommended
         if not result['requirements']['has_special']:
-            result['warnings'] = ['Consider using special characters for stronger security']
-        
+            if 'warnings' not in result:
+                result['warnings'] = []
+            result['warnings'].append('Consider using special characters for stronger security')
+
         return result
 
 
