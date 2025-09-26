@@ -79,19 +79,122 @@ class AIInsightsCacheService:
             basic_analysis = await self._generate_basic_analysis(user_debts)
             return basic_analysis, False
 
+    async def get_ai_recommendations(self, user_id: PyUUID) -> Tuple[List[Dict[str, Any]], bool]:
+        """
+        Get AI recommendations for user with intelligent caching.
+
+        This method provides dedicated recommendations caching to ensure consistency
+        and reduce AI API costs for the /recommendations endpoint.
+
+        Returns:
+            Tuple[List[Dict[str, Any]], bool]: (recommendations_list, is_from_cache)
+        """
+        try:
+            # Get current debt portfolio for cache validation
+            user_debts = await self.debt_repo.get_debts_by_user_id(user_id)
+            if not user_debts:
+                logger.info(f"No debts found for user {user_id}, returning empty recommendations")
+                return [], False
+
+            current_cache_key = AIInsightsCache.generate_cache_key(
+                user_id,
+                [debt.to_dict() for debt in user_debts]
+            )
+
+            # Check for valid cache entry containing recommendations
+            cached_insights = await self._get_valid_cache_entry(user_id, current_cache_key)
+            if cached_insights and cached_insights.recommendations:
+                logger.info(f"Returning cached AI recommendations for user {user_id}")
+                return cached_insights.recommendations, True
+
+            # Check if already processing insights (which include recommendations)
+            existing_job = await self._get_active_processing_job(user_id)
+            if existing_job:
+                logger.info(f"AI insights (with recommendations) already processing for user {user_id}")
+                # Return basic recommendations while processing continues
+                basic_recommendations = self._generate_basic_recommendations(user_debts)
+                return basic_recommendations, False
+
+            # Generate fresh AI insights (which includes recommendations) and cache them
+            logger.info(f"Generating fresh AI recommendations for user {user_id}")
+            insights = await self._generate_and_cache_insights(user_id, user_debts, current_cache_key)
+            recommendations = insights.get("recommendations", [])
+            return recommendations, False
+
+        except Exception as e:
+            logger.error(f"Error getting AI recommendations for user {user_id}: {e}")
+            # Fallback to basic recommendations
+            try:
+                user_debts = await self.debt_repo.get_debts_by_user_id(user_id)
+                basic_recommendations = self._generate_basic_recommendations(user_debts)
+                return basic_recommendations, False
+            except Exception as fallback_error:
+                logger.error(f"Error generating fallback recommendations for user {user_id}: {fallback_error}")
+                return [], False
+
     async def get_insights_status(self, user_id: PyUUID) -> Dict[str, Any]:
         """Get processing status for user's AI insights."""
         try:
-            # Check for valid cache
-            cached_insights = await self._get_latest_cache_entry(user_id)
-            if cached_insights and not cached_insights.is_expired():
+            logger.debug(f"Getting insights status for user {user_id}")
+
+            # Get current debt portfolio to generate cache key (same logic as get_ai_insights)
+            user_debts = await self.debt_repo.get_debts_by_user_id(user_id)
+            current_cache_key = AIInsightsCache.generate_cache_key(
+                user_id,
+                [debt.to_dict() for debt in user_debts]
+            )
+
+            logger.debug(f"Generated cache key for user {user_id}: {current_cache_key[:16]}...")
+
+            # Check for valid cache using same validation logic as get_ai_insights
+            cached_insights = await self._get_valid_cache_entry(user_id, current_cache_key)
+            if cached_insights:
+                logger.debug(f"Found valid cache entry for user {user_id}")
                 return {
                     "status": "completed",
                     "cached": True,
                     "generated_at": cached_insights.generated_at.isoformat(),
                     "expires_at": cached_insights.expires_at.isoformat(),
                     "processing_time": cached_insights.processing_time,
+                    "cache_key_match": True,
                 }
+
+            # Check if there's any cache entry (even if expired or invalid) to provide more detail
+            latest_cache = await self._get_latest_cache_entry(user_id)
+            if latest_cache:
+                is_expired = latest_cache.is_expired()
+                cache_key_match = latest_cache.cache_key == current_cache_key
+
+                if is_expired and cache_key_match:
+                    # Cache exists but expired - insights available but need refresh
+                    return {
+                        "status": "expired",
+                        "cached": False,
+                        "generated_at": latest_cache.generated_at.isoformat(),
+                        "expires_at": latest_cache.expires_at.isoformat(),
+                        "cache_key_match": True,
+                        "message": "AI insights exist but have expired"
+                    }
+                elif not cache_key_match and not is_expired:
+                    # Cache exists but debt portfolio changed - insights need regeneration
+                    return {
+                        "status": "stale",
+                        "cached": False,
+                        "generated_at": latest_cache.generated_at.isoformat(),
+                        "expires_at": latest_cache.expires_at.isoformat(),
+                        "cache_key_match": False,
+                        "message": "AI insights exist but debt portfolio has changed"
+                    }
+                elif not cache_key_match and is_expired:
+                    # Cache exists but both expired and debt portfolio changed
+                    return {
+                        "status": "expired_and_stale",
+                        "cached": False,
+                        "generated_at": latest_cache.generated_at.isoformat(),
+                        "expires_at": latest_cache.expires_at.isoformat(),
+                        "cache_key_match": False,
+                        "message": "AI insights exist but are expired and debt portfolio has changed"
+                    }
 
             # Check processing queue
             processing_job = await self._get_active_processing_job(user_id)
@@ -102,11 +205,14 @@ class AIInsightsCacheService:
                     "started_at": processing_job.started_at.isoformat() if processing_job.started_at else None,
                     "attempts": processing_job.attempts,
                     "estimated_completion": self._estimate_completion_time(processing_job),
+                    "cache_exists": latest_cache is not None
                 }
 
+            # Truly no insights have been generated
             return {
                 "status": "not_generated",
                 "cached": False,
+                "cache_exists": False,
                 "message": "AI insights have not been generated for this user"
             }
 
@@ -176,6 +282,102 @@ class AIInsightsCacheService:
             logger.error(f"Error cleaning up expired cache: {e}")
             return 0
 
+    async def has_insights_available(self, user_id: PyUUID) -> Tuple[bool, Optional[str]]:
+        """
+        Check if user has any AI insights available (cached or processing).
+
+        Returns:
+            Tuple[bool, Optional[str]]: (has_insights, status_reason)
+        """
+        try:
+            # Check for any cache entry first
+            latest_cache = await self._get_latest_cache_entry(user_id)
+            if latest_cache:
+                # Get current cache key to check if it's still valid
+                user_debts = await self.debt_repo.get_debts_by_user_id(user_id)
+                current_cache_key = AIInsightsCache.generate_cache_key(
+                    user_id,
+                    [debt.to_dict() for debt in user_debts]
+                )
+
+                if latest_cache.is_valid(current_cache_key):
+                    return True, "cached_valid"
+                elif not latest_cache.is_expired():
+                    return True, "cached_stale"  # Portfolio changed
+                else:
+                    return True, "cached_expired"
+
+            # Check if processing
+            processing_job = await self._get_active_processing_job(user_id)
+            if processing_job:
+                return True, "processing"
+
+            return False, "not_generated"
+
+        except Exception as e:
+            logger.error(f"Error checking insights availability for user {user_id}: {e}")
+            return False, "error"
+
+    async def get_recommendations_status(self, user_id: PyUUID) -> Dict[str, Any]:
+        """
+        Get processing status for user's AI recommendations.
+
+        This provides the same status information as insights since recommendations
+        are part of the cached insights data.
+        """
+        try:
+            status_info = await self.get_insights_status(user_id)
+            # Add recommendations-specific metadata
+            status_info["endpoint_type"] = "recommendations"
+            status_info["cache_shared_with_insights"] = True
+
+            # If we have cached data, check if recommendations exist
+            if status_info.get("status") == "completed":
+                latest_cache = await self._get_latest_cache_entry(user_id)
+                if latest_cache:
+                    recommendations_count = len(latest_cache.recommendations) if latest_cache.recommendations else 0
+                    status_info["recommendations_count"] = recommendations_count
+                    status_info["has_recommendations"] = recommendations_count > 0
+
+            return status_info
+
+        except Exception as e:
+            logger.error(f"Error getting recommendations status for user {user_id}: {e}")
+            return {
+                "status": "error",
+                "cached": False,
+                "endpoint_type": "recommendations",
+                "message": str(e)
+            }
+
+    async def has_recommendations_available(self, user_id: PyUUID) -> Tuple[bool, Optional[str]]:
+        """
+        Check if user has any AI recommendations available (cached or processing).
+
+        This uses the same logic as insights since recommendations are part of insights.
+
+        Returns:
+            Tuple[bool, Optional[str]]: (has_recommendations, status_reason)
+        """
+        try:
+            has_insights, status_reason = await self.has_insights_available(user_id)
+
+            # If we have valid cached insights, check if they contain recommendations
+            if has_insights and status_reason == "cached_valid":
+                latest_cache = await self._get_latest_cache_entry(user_id)
+                if latest_cache and latest_cache.recommendations:
+                    recommendations_count = len(latest_cache.recommendations)
+                    if recommendations_count > 0:
+                        return True, f"cached_valid_{recommendations_count}_recommendations"
+                    else:
+                        return True, "cached_valid_no_recommendations"
+
+            return has_insights, status_reason
+
+        except Exception as e:
+            logger.error(f"Error checking recommendations availability for user {user_id}: {e}")
+            return False, "error"
+
     # Private methods
 
     async def _get_valid_cache_entry(self, user_id: PyUUID, cache_key: str) -> Optional[AIInsightsCache]:
@@ -218,15 +420,15 @@ class AIInsightsCacheService:
             logger.error(f"Error getting latest cache entry: {e}")
             return None
 
-    async def _get_active_processing_job(self, user_id: PyUUID) -> Optional[AIProcessingQueue]:
-        """Get active processing job for user."""
+    async def _get_active_processing_job(self, user_id: PyUUID, task_type: str = 'ai_insights') -> Optional[AIProcessingQueue]:
+        """Get active processing job for user for a specific task type."""
         try:
             result = await self.db.execute(
                 select(AIProcessingQueue)
                 .where(
                     and_(
                         AIProcessingQueue.user_id == user_id,
-                        AIProcessingQueue.task_type == 'ai_insights',
+                        AIProcessingQueue.task_type == task_type,
                         AIProcessingQueue.status.in_(['queued', 'processing'])
                     )
                 )

@@ -422,7 +422,7 @@ class AIService:
                 - extra_payment_target: Optional[str] (debt_id)
 
         Returns:
-            Dict containing simulation results for each scenario
+            Dict containing simulation results for each scenario that matches SimulationResultsResponse
         """
         try:
             logger.info(f"Simulating payment scenarios for user {user_id}")
@@ -435,19 +435,54 @@ class AIService:
             results = []
             for i, scenario in enumerate(scenarios):
                 try:
+                    # Validate scenario parameters
+                    if "monthly_payment" not in scenario or scenario["monthly_payment"] <= 0:
+                        raise ValueError(f"Scenario {i+1}: Monthly payment must be greater than 0")
+
+                    if "strategy" not in scenario or scenario["strategy"] not in ["avalanche", "snowball"]:
+                        raise ValueError(f"Scenario {i+1}: Strategy must be 'avalanche' or 'snowball'")
+
+                    # Run simulation
                     simulation_result = await self._simulate_single_scenario(
                         user_debts, scenario
                     )
+
+                    # Add scenario_id to match SimulationResult model
                     simulation_result["scenario_id"] = i + 1
+
+                    # Validate that all required fields are present
+                    required_fields = [
+                        "scenario_id", "time_to_debt_free", "total_interest_paid", "total_amount_paid",
+                        "debt_free_date", "debts_paid_off_count", "payment_timeline",
+                        "strategy_used", "monthly_payment_used", "valid"
+                    ]
+
+                    for field in required_fields:
+                        if field not in simulation_result:
+                            logger.error(f"Missing required field '{field}' in simulation result for scenario {i+1}")
+                            simulation_result[field] = self._get_default_value_for_field(field)
+
                     results.append(simulation_result)
+
                 except Exception as e:
                     logger.error(f"Failed to simulate scenario {i+1}: {e}")
-                    results.append({
+                    # Create error response that matches SimulationResult model
+                    error_result = {
                         "scenario_id": i + 1,
-                        "error": str(e),
-                        "valid": False
-                    })
+                        "time_to_debt_free": 0,
+                        "total_interest_paid": 0.0,
+                        "total_amount_paid": 0.0,
+                        "debt_free_date": datetime.now().strftime("%Y-%m-%d"),
+                        "debts_paid_off_count": 0,
+                        "payment_timeline": [],
+                        "strategy_used": scenario.get("strategy", "avalanche"),
+                        "monthly_payment_used": scenario.get("monthly_payment", 0),
+                        "valid": False,
+                        "error": str(e)
+                    }
+                    results.append(error_result)
 
+            # Return response matching SimulationResultsResponse model
             return {
                 "user_id": str(user_id),
                 "simulation_results": results,
@@ -665,125 +700,167 @@ class AIService:
             scenario: Scenario parameters
 
         Returns:
-            Dict containing simulation results
+            Dict containing simulation results that matches SimulationResult model
         """
-        monthly_payment = scenario.get("monthly_payment", 0)
-        strategy = scenario.get("strategy", "avalanche")
-        extra_payment_target = scenario.get("extra_payment_target")
+        try:
+            monthly_payment = scenario.get("monthly_payment", 0)
+            strategy = scenario.get("strategy", "avalanche")
+            extra_payment_target = scenario.get("extra_payment_target")
 
-        # Convert debts to simulation format
-        simulation_debts = []
-        for debt in debts:
-            simulation_debts.append({
-                "id": str(debt.id),
-                "name": debt.name,
-                "balance": float(debt.current_balance),
-                "interest_rate": float(debt.interest_rate) / 100,  # Convert percentage to decimal
-                "minimum_payment": float(debt.minimum_payment),
-                "debt_type": debt.debt_type.value
-            })
+            # Convert debts to simulation format
+            simulation_debts = []
+            for debt in debts:
+                simulation_debts.append({
+                    "id": str(debt.id),
+                    "name": debt.name,
+                    "balance": float(debt.current_balance),
+                    "interest_rate": float(debt.interest_rate) / 100,  # Convert percentage to decimal
+                    "minimum_payment": float(debt.minimum_payment),
+                    "debt_type": debt.debt_type.value
+                })
 
-        # Calculate minimum payments total
-        total_minimums = sum(debt["minimum_payment"] for debt in simulation_debts)
+            # Calculate minimum payments total
+            total_minimums = sum(debt["minimum_payment"] for debt in simulation_debts)
 
-        if monthly_payment < total_minimums:
-            raise ValueError(f"Monthly payment ₹{monthly_payment:.2f} is less than minimum payments ₹{total_minimums:.2f}")
+            if monthly_payment < total_minimums:
+                raise ValueError(f"Monthly payment ₹{monthly_payment:.2f} is less than minimum payments ₹{total_minimums:.2f}")
 
-        # Calculate extra payment amount
-        extra_payment = monthly_payment - total_minimums
+            # Calculate extra payment amount
+            extra_payment = monthly_payment - total_minimums
 
-        # Sort debts based on strategy
-        if strategy == "avalanche":
-            # Highest interest rate first
-            sorted_debts = sorted(simulation_debts, key=lambda x: x["interest_rate"], reverse=True)
-        elif strategy == "snowball":
-            # Smallest balance first
-            sorted_debts = sorted(simulation_debts, key=lambda x: x["balance"])
-        else:
-            # Default to avalanche
-            sorted_debts = sorted(simulation_debts, key=lambda x: x["interest_rate"], reverse=True)
+            # Sort debts based on strategy
+            if strategy == "avalanche":
+                # Highest interest rate first
+                sorted_debts = sorted(simulation_debts, key=lambda x: x["interest_rate"], reverse=True)
+            elif strategy == "snowball":
+                # Smallest balance first
+                sorted_debts = sorted(simulation_debts, key=lambda x: x["balance"])
+            else:
+                # Default to avalanche
+                sorted_debts = sorted(simulation_debts, key=lambda x: x["interest_rate"], reverse=True)
 
-        # Simulate month-by-month payments
-        payment_timeline = []
-        month = 0
-        total_interest_paid = 0
-        debts_paid_off = 0
-        remaining_debts = [debt.copy() for debt in sorted_debts]
+            # Simulate month-by-month payments
+            payment_timeline = []
+            month = 0
+            total_interest_paid = 0
+            debts_paid_off = 0
+            remaining_debts = [debt.copy() for debt in sorted_debts]
+            initial_total_debt = sum(debt["balance"] for debt in simulation_debts)
 
-        while remaining_debts and month < 600:  # Cap at 50 years
-            month += 1
-            month_interest = 0
-            month_principal = 0
-            month_extra_payment = extra_payment
+            while remaining_debts and month < 600:  # Cap at 50 years
+                month += 1
+                month_interest = 0
+                month_principal = 0
+                month_extra_payment = extra_payment
 
-            # Apply minimum payments and calculate interest
-            for debt in remaining_debts[:]:
-                monthly_interest = debt["balance"] * (debt["interest_rate"] / 12)
-                principal_payment = debt["minimum_payment"] - monthly_interest
+                # Apply minimum payments and calculate interest
+                for debt in remaining_debts[:]:
+                    monthly_interest = debt["balance"] * (debt["interest_rate"] / 12)
+                    principal_payment = min(debt["minimum_payment"] - monthly_interest, debt["balance"])
 
-                month_interest += monthly_interest
-                month_principal += principal_payment
+                    # Ensure principal payment is not negative
+                    principal_payment = max(0, principal_payment)
 
-                debt["balance"] -= principal_payment
+                    month_interest += monthly_interest
+                    month_principal += principal_payment
 
-                if debt["balance"] <= 0:
-                    remaining_debts.remove(debt)
-                    debts_paid_off += 1
+                    debt["balance"] -= principal_payment
 
-            # Apply extra payment to prioritized debt
-            if month_extra_payment > 0 and remaining_debts:
-                target_debt = remaining_debts[0]  # First debt in sorted order
+                    if debt["balance"] <= 0:
+                        remaining_debts.remove(debt)
+                        debts_paid_off += 1
 
-                if extra_payment_target:
-                    # Find specific target debt
-                    for debt in remaining_debts:
-                        if debt["id"] == extra_payment_target:
-                            target_debt = debt
-                            break
+                # Apply extra payment to prioritized debt
+                if month_extra_payment > 0 and remaining_debts:
+                    target_debt = remaining_debts[0]  # First debt in sorted order
 
-                if target_debt["balance"] <= month_extra_payment:
-                    # Pay off debt completely
-                    month_principal += target_debt["balance"]
-                    target_debt["balance"] = 0
-                    remaining_debts.remove(target_debt)
-                    debts_paid_off += 1
-                else:
-                    # Partial payment
-                    target_debt["balance"] -= month_extra_payment
-                    month_principal += month_extra_payment
+                    if extra_payment_target:
+                        # Find specific target debt
+                        for debt in remaining_debts:
+                            if debt["id"] == extra_payment_target:
+                                target_debt = debt
+                                break
 
-            total_interest_paid += month_interest
-            total_remaining_debt = sum(debt["balance"] for debt in remaining_debts)
+                    if target_debt["balance"] <= month_extra_payment:
+                        # Pay off debt completely
+                        month_principal += target_debt["balance"]
+                        target_debt["balance"] = 0
+                        remaining_debts.remove(target_debt)
+                        debts_paid_off += 1
+                    else:
+                        # Partial payment
+                        target_debt["balance"] -= month_extra_payment
+                        month_principal += month_extra_payment
 
-            payment_timeline.append({
-                "month": month,
-                "total_debt": round(total_remaining_debt, 2),
-                "monthly_payment": round(monthly_payment, 2),
-                "interest_paid": round(month_interest, 2),
-                "principal_paid": round(month_principal, 2),
-                "remaining_debts": len(remaining_debts)
-            })
+                total_interest_paid += month_interest
+                total_remaining_debt = sum(debt["balance"] for debt in remaining_debts)
 
-            if not remaining_debts:
-                break
+                payment_timeline.append({
+                    "month": month,
+                    "total_debt": round(total_remaining_debt, 2),
+                    "monthly_payment": round(monthly_payment, 2),
+                    "interest_paid": round(month_interest, 2),
+                    "principal_paid": round(month_principal, 2),
+                    "remaining_debts": len(remaining_debts)
+                })
 
-        # Calculate debt-free date
-        debt_free_date = (datetime.now() + timedelta(days=month * 30)).strftime("%Y-%m-%d")
+                if not remaining_debts:
+                    break
 
-        # Calculate total amount paid
-        total_amount_paid = sum(debt["balance"] for debt in simulation_debts) + total_interest_paid
+            # Calculate debt-free date
+            debt_free_date = (datetime.now() + timedelta(days=month * 30)).strftime("%Y-%m-%d")
 
-        return {
-            "time_to_debt_free": month,
-            "total_interest_paid": round(total_interest_paid, 2),
-            "total_amount_paid": round(total_amount_paid, 2),
-            "debt_free_date": debt_free_date,
-            "debts_paid_off_count": debts_paid_off,
-            "payment_timeline": payment_timeline[-12:] if len(payment_timeline) > 12 else payment_timeline,  # Last 12 months for preview
-            "strategy_used": strategy,
-            "monthly_payment_used": monthly_payment,
-            "valid": True
+            # Calculate total amount paid (original debt + interest)
+            total_amount_paid = initial_total_debt + total_interest_paid
+
+            # Return complete SimulationResult-compatible object
+            return {
+                "time_to_debt_free": month,
+                "total_interest_paid": round(total_interest_paid, 2),
+                "total_amount_paid": round(total_amount_paid, 2),
+                "debt_free_date": debt_free_date,
+                "debts_paid_off_count": debts_paid_off,
+                "payment_timeline": payment_timeline[-12:] if len(payment_timeline) > 12 else payment_timeline,  # Last 12 months for preview
+                "strategy_used": strategy,
+                "monthly_payment_used": monthly_payment,
+                "valid": True,
+                "error": None
+            }
+
+        except Exception as e:
+            logger.error(f"Error in _simulate_single_scenario: {str(e)}")
+            # Return error response that matches SimulationResult model
+            return {
+                "time_to_debt_free": 0,
+                "total_interest_paid": 0.0,
+                "total_amount_paid": 0.0,
+                "debt_free_date": datetime.now().strftime("%Y-%m-%d"),
+                "debts_paid_off_count": 0,
+                "payment_timeline": [],
+                "strategy_used": scenario.get("strategy", "avalanche"),
+                "monthly_payment_used": scenario.get("monthly_payment", 0),
+                "valid": False,
+                "error": str(e)
+            }
+
+    def _get_default_value_for_field(self, field_name: str) -> Any:
+        """
+        Get default value for missing simulation result fields
+        """
+        defaults = {
+            "scenario_id": 0,
+            "time_to_debt_free": 0,
+            "total_interest_paid": 0.0,
+            "total_amount_paid": 0.0,
+            "debt_free_date": datetime.now().strftime("%Y-%m-%d"),
+            "debts_paid_off_count": 0,
+            "payment_timeline": [],
+            "strategy_used": "avalanche",
+            "monthly_payment_used": 0.0,
+            "valid": False,
+            "error": "Missing field in simulation result"
         }
+        return defaults.get(field_name, None)
 
     def _get_strategy_recommendation_reason(
         self,

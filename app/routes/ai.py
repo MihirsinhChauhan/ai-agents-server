@@ -21,6 +21,7 @@ from app.models.ai import (
     DebtAnalysisResponse,
     AIInsightsRequest,
     AIErrorResponse,
+    AIInsightsStatusResponse,
     PaymentScenarioRequest,
     StrategyComparisonResponse,
     PaymentTimelineResponse,
@@ -141,84 +142,7 @@ async def get_ai_insights(
         )
 
 
-@router.post("/simulate", response_model=SimulationResultsResponse)
-async def simulate_payment_scenarios(
-    request: PaymentScenarioRequest,
-    current_user: CurrentUser,
-    ai_service: AIService = Depends(get_ai_service)
-):
-    """
-    Simulate different payment scenarios for real-time "what-if" analysis.
-    Allows users to test various monthly payment amounts and strategies.
-
-    Request Body:
-    - scenarios: List of scenarios to simulate, each containing monthly_payment, strategy, etc.
-    """
-    try:
-        # Validate scenarios
-        if not request.scenarios:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="At least one scenario is required"
-            )
-
-        for i, scenario in enumerate(request.scenarios):
-            if scenario.monthly_payment <= 0:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Scenario {i+1}: Monthly payment must be greater than 0"
-                )
-
-            if scenario.strategy not in ["avalanche", "snowball"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Scenario {i+1}: Strategy must be either 'avalanche' or 'snowball'"
-                )
-
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
-        if not user_debts:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No debts found for simulation. Please add some debts first."
-            )
-
-        # Convert scenarios to dict format
-        scenarios_dict = []
-        for scenario in request.scenarios:
-            scenario_dict = {
-                "monthly_payment": scenario.monthly_payment,
-                "strategy": scenario.strategy
-            }
-            if scenario.extra_payment_target:
-                scenario_dict["extra_payment_target"] = scenario.extra_payment_target
-            scenarios_dict.append(scenario_dict)
-
-        results = await ai_service.simulate_payment_scenarios(
-            user_id=current_user.id,
-            scenarios=scenarios_dict
-        )
-
-        return SimulationResultsResponse(**results)
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input: {str(e)}"
-        )
-    except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to simulate payment scenarios for user {current_user.id}: {str(e)}", exc_info=True)
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to simulate payment scenarios. Please try again later."
-        )
-
+# Removed first duplicate simulate endpoint - keeping the improved version at the end of the file
 
 @router.get("/strategies/compare", response_model=StrategyComparisonResponse)
 async def compare_strategies(
@@ -424,20 +348,51 @@ async def calculate_optimization_metrics(
 @router.get("/recommendations", response_model=List[AIRecommendationResponse])
 async def get_ai_recommendations(
     current_user: CurrentUser,
-    ai_service: AIService = Depends(get_ai_service)
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ):
     """
     Get AI-generated recommendations for debt optimization strategies.
     Returns personalized suggestions based on user's debt profile.
+
+    This endpoint now uses intelligent caching to:
+    - Provide consistent recommendations across multiple calls
+    - Reduce AI API costs through caching
+    - Improve response times with cached data
+    - Automatically invalidate cache when debt portfolio changes
     """
     try:
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
+        # Check if user has debts first
+        user_debts = await ai_cache_service.debt_repo.get_debts_by_user_id(current_user.id)
         if not user_debts:
             return []  # Return empty list instead of error for recommendations
 
-        recommendations = await ai_service.get_recommendations(user_id=current_user.id)
-        return [AIRecommendationResponse(**rec) for rec in recommendations]
+        # Get AI recommendations with intelligent caching
+        recommendations, is_cached = await ai_cache_service.get_ai_recommendations(current_user.id)
+
+        # Log cache usage for monitoring
+        import logging
+        logger = logging.getLogger(__name__)
+        cache_status = "cached" if is_cached else "generated"
+        logger.info(f"Returning {len(recommendations)} AI recommendations for user {current_user.id} ({cache_status})")
+
+        # Convert to response model and add cache metadata to headers
+        response_data = []
+        for rec in recommendations:
+            # Ensure the recommendation has required fields
+            recommendation_data = {
+                "id": rec.get("id", f"rec_{len(response_data)}"),
+                "user_id": rec.get("user_id", str(current_user.id)),
+                "recommendation_type": rec.get("recommendation_type", "general"),
+                "title": rec.get("title", "Recommendation"),
+                "description": rec.get("description", ""),
+                "potential_savings": rec.get("potential_savings", 0),
+                "priority_score": rec.get("priority_score", 5),
+                "is_dismissed": rec.get("is_dismissed", False),
+                "created_at": rec.get("created_at")
+            }
+            response_data.append(AIRecommendationResponse(**recommendation_data))
+
+        return response_data
 
     except Exception as e:
         # Log the error for debugging
@@ -445,10 +400,9 @@ async def get_ai_recommendations(
         logger = logging.getLogger(__name__)
         logger.error(f"Failed to get AI recommendations for user {current_user.id}: {str(e)}", exc_info=True)
 
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to get AI recommendations. Please try again later."
-        )
+        # Return empty list instead of error to maintain API consistency
+        logger.warning(f"Returning empty recommendations list due to error for user {current_user.id}")
+        return []
 
 
 @router.get("/dti", response_model=DTIAnalysisResponse)
@@ -556,12 +510,22 @@ async def generate_ai_insights(
                 detail="No debts found for analysis. Please add some debts first."
             )
 
+        # Note: This endpoint bypasses cache and generates fresh insights
+        # Use GET /insights for cached results
         insights = await ai_service.get_ai_insights(
             user_id=current_user.id,
             monthly_payment_budget=request.monthly_payment_budget,
             preferred_strategy=request.preferred_strategy,
             include_dti=request.include_dti
         )
+
+        # Add metadata to indicate this was a fresh generation
+        insights["metadata"] = {
+            **insights.get("metadata", {}),
+            "cached": False,
+            "cache_source": "fresh_generation",
+            "endpoint": "POST_insights"
+        }
 
         return AIInsightsResponse(**insights)
 
@@ -663,207 +627,6 @@ async def simulate_payment_scenarios(
         )
 
 
-@router.get("/strategies/compare", response_model=StrategyComparisonResponse)
-async def compare_strategies(
-    monthly_payment: float,
-    current_user: CurrentUser,
-    ai_service: AIService = Depends(get_ai_service)
-):
-    """
-    Compare Avalanche vs Snowball strategies side-by-side.
-    Shows detailed metrics for both strategies with the same monthly payment amount.
-
-    Query Parameters:
-    - monthly_payment: Monthly payment amount to use for comparison
-    """
-    try:
-        # Validate input
-        if monthly_payment <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Monthly payment must be greater than 0"
-            )
-
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
-        if not user_debts:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No debts found for comparison. Please add some debts first."
-            )
-
-        comparison = await ai_service.compare_strategies(
-            user_id=current_user.id,
-            monthly_payment=monthly_payment
-        )
-
-        return StrategyComparisonResponse(**comparison)
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input: {str(e)}"
-        )
-    except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to compare strategies for user {current_user.id}: {str(e)}", exc_info=True)
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to compare strategies. Please try again later."
-        )
-
-
-@router.get("/timeline", response_model=PaymentTimelineResponse)
-async def get_payment_timeline(
-    monthly_payment: float,
-    current_user: CurrentUser,
-    strategy: str = "avalanche",
-    ai_service: AIService = Depends(get_ai_service)
-):
-    """
-    Generate detailed month-by-month payment timeline for a specific strategy.
-    Shows how debts will be paid off over time.
-
-    Query Parameters:
-    - monthly_payment: Monthly payment amount
-    - strategy: Payment strategy (avalanche or snowball, default: avalanche)
-    """
-    try:
-        # Validate inputs
-        if monthly_payment <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Monthly payment must be greater than 0"
-            )
-
-        if strategy not in ["avalanche", "snowball"]:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Strategy must be either 'avalanche' or 'snowball'"
-            )
-
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
-        if not user_debts:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No debts found for timeline generation. Please add some debts first."
-            )
-
-        timeline = await ai_service.generate_payment_timeline(
-            user_id=current_user.id,
-            monthly_payment=monthly_payment,
-            strategy=strategy
-        )
-
-        return PaymentTimelineResponse(**timeline)
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input: {str(e)}"
-        )
-    except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to generate payment timeline for user {current_user.id}: {str(e)}", exc_info=True)
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to generate payment timeline. Please try again later."
-        )
-
-
-@router.post("/optimize", response_model=OptimizationMetricsResponse)
-async def calculate_optimization_metrics(
-    request: dict,
-    current_user: CurrentUser,
-    ai_service: AIService = Depends(get_ai_service)
-):
-    """
-    Calculate optimization metrics comparing current vs optimized strategies.
-    Shows potential savings and improvements.
-
-    Request Body:
-    - current_strategy: Current payment strategy details (monthly_payment, strategy)
-    - optimized_strategy: Optimized payment strategy details (monthly_payment, strategy)
-    """
-    try:
-        # Extract strategies from request
-        current_strategy = request.get("current_strategy", {})
-        optimized_strategy = request.get("optimized_strategy", {})
-
-        # Validate inputs
-        required_fields = ["monthly_payment", "strategy"]
-
-        for field in required_fields:
-            if field not in current_strategy:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Current strategy missing required field: {field}"
-                )
-            if field not in optimized_strategy:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Optimized strategy missing required field: {field}"
-                )
-
-        if current_strategy["monthly_payment"] <= 0 or optimized_strategy["monthly_payment"] <= 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Monthly payments must be greater than 0"
-            )
-
-        for strategy in [current_strategy["strategy"], optimized_strategy["strategy"]]:
-            if strategy not in ["avalanche", "snowball"]:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Strategy must be either 'avalanche' or 'snowball'"
-                )
-
-        # Check if user has debts
-        user_debts = await ai_service.debt_repo.get_debts_by_user_id(current_user.id)
-        if not user_debts:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No debts found for optimization calculation. Please add some debts first."
-            )
-
-        metrics = await ai_service.calculate_optimization_metrics(
-            user_id=current_user.id,
-            current_strategy=current_strategy,
-            optimized_strategy=optimized_strategy
-        )
-
-        return OptimizationMetricsResponse(**metrics)
-
-    except HTTPException:
-        raise
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid input: {str(e)}"
-        )
-    except Exception as e:
-        # Log the error for debugging
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.error(f"Failed to calculate optimization metrics for user {current_user.id}: {str(e)}", exc_info=True)
-
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to calculate optimization metrics. Please try again later."
-        )
-
-
 @router.get("/insights/enhanced")
 async def get_enhanced_ai_insights(
     current_user: CurrentUser,
@@ -935,14 +698,23 @@ async def get_enhanced_ai_insights(
         )
 
 
-@router.get("/insights/status")
+@router.get("/insights/status", response_model=AIInsightsStatusResponse)
 async def get_insights_status(
     current_user: CurrentUser,
     ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
 ):
     """
     Get the processing status of AI insights for the current user.
-    Returns cache status, processing status, or completion info.
+    Returns detailed cache status, processing status, or completion info.
+
+    Status values:
+    - completed: Valid cached insights available
+    - expired: Cache exists but expired
+    - stale: Cache exists but debt portfolio changed
+    - expired_and_stale: Cache exists but both expired and portfolio changed
+    - processing/queued: AI generation in progress
+    - not_generated: No insights exist yet
+    - error: Error occurred during status check
     """
     try:
         status_info = await ai_cache_service.get_insights_status(current_user.id)
@@ -956,6 +728,43 @@ async def get_insights_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get insights status. Please try again later."
+        )
+
+
+@router.get("/recommendations/status")
+async def get_recommendations_status(
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Get the processing status of AI recommendations for the current user.
+    Returns detailed cache status, processing status, or completion info.
+
+    Since recommendations are part of the cached insights data, this endpoint
+    provides the same status information as /insights/status but with
+    recommendations-specific metadata.
+
+    Status values:
+    - completed: Valid cached recommendations available
+    - expired: Cache exists but expired
+    - stale: Cache exists but debt portfolio changed
+    - expired_and_stale: Cache exists but both expired and portfolio changed
+    - processing/queued: AI generation in progress
+    - not_generated: No recommendations exist yet
+    - error: Error occurred during status check
+    """
+    try:
+        status_info = await ai_cache_service.get_recommendations_status(current_user.id)
+        return status_info
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to get recommendations status for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get recommendations status. Please try again later."
         )
 
 
@@ -989,6 +798,45 @@ async def refresh_insights(
         )
 
 
+@router.post("/recommendations/refresh")
+async def refresh_recommendations(
+    current_user: CurrentUser,
+    force: bool = False,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Force refresh of AI recommendations for the current user.
+
+    Since recommendations are part of the cached insights data, this endpoint
+    triggers a refresh of the entire insights cache, which includes recommendations.
+
+    Query Parameters:
+    - force: If true, invalidates existing cache and forces regeneration
+    """
+    try:
+        refresh_info = await ai_cache_service.refresh_insights(
+            user_id=current_user.id,
+            force=force
+        )
+
+        # Add recommendations-specific metadata
+        refresh_info["endpoint_type"] = "recommendations"
+        refresh_info["cache_shared_with_insights"] = True
+        refresh_info["message"] = "AI recommendations refresh has been queued for processing (shares cache with insights)"
+
+        return refresh_info
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to refresh recommendations for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to refresh recommendations. Please try again later."
+        )
+
+
 @router.delete("/insights/cache")
 async def invalidate_cache(
     current_user: CurrentUser,
@@ -1013,6 +861,43 @@ async def invalidate_cache(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to invalidate cache. Please try again later."
+        )
+
+
+@router.delete("/recommendations/cache")
+async def invalidate_recommendations_cache(
+    current_user: CurrentUser,
+    ai_cache_service: AIInsightsCacheService = Depends(get_ai_cache_service)
+):
+    """
+    Invalidate the AI recommendations cache for the current user.
+
+    Since recommendations are part of the cached insights data, this endpoint
+    invalidates the entire insights cache, which includes recommendations.
+    This will force fresh generation on the next recommendations request.
+    """
+    try:
+        success = await ai_cache_service.invalidate_cache_for_user(current_user.id)
+        if success:
+            return {
+                "message": "Recommendations cache invalidated successfully",
+                "cache_shared_with_insights": True,
+                "note": "This also invalidated the insights cache as they share the same storage"
+            }
+        else:
+            return {
+                "message": "Recommendations cache invalidation completed with warnings",
+                "cache_shared_with_insights": True
+            }
+    except Exception as e:
+        # Log the error for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Failed to invalidate recommendations cache for user {current_user.id}: {str(e)}")
+
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to invalidate recommendations cache. Please try again later."
         )
 
 
