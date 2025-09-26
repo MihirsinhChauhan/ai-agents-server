@@ -41,7 +41,11 @@ class DatabaseManager:
         """Build the async PostgreSQL connection string for SQLAlchemy."""
         if settings.DATABASE_URL:
             # Convert postgres:// to postgresql+asyncpg:// for SQLAlchemy
-            db_url = settings.DATABASE_URL.replace("postgres://", "postgresql+asyncpg://", 1)
+            db_url = settings.DATABASE_URL
+            if db_url.startswith("postgres://"):
+                db_url = db_url.replace("postgres://", "postgresql+asyncpg://", 1)
+            elif db_url.startswith("postgresql://"):
+                db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
             return db_url
         return (
             f"postgresql+asyncpg://{settings.DB_USER}:{settings.DB_PASSWORD}"
@@ -85,6 +89,7 @@ class DatabaseManager:
         Create SQLAlchemy async engine and session factory for AI cache services.
         """
         try:
+            logger.info(f"Creating SQLAlchemy engine with connection string: {self._sqlalchemy_connection_string}")
             self.sqlalchemy_engine = create_async_engine(
                 self._sqlalchemy_connection_string,
                 pool_size=settings.DB_MAX_SIZE // 2,  # Use half the pool size for SQLAlchemy

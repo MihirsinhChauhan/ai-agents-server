@@ -9,6 +9,7 @@ email-validator>=2.0.0
 # Database
 asyncpg>=0.29.0
 psycopg2-binary>=2.9.6
+sqlalchemy[asyncio,postgresql_asyncpg]>=2.0.0
 python-dotenv>=1.0.0
 
 # Authentication and Security
