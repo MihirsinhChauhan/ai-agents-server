@@ -13,8 +13,9 @@ class Settings(BaseSettings):
     # Environment
     ENVIRONMENT: str = os.getenv("ENVIRONMENT", "development")
     DEBUG: bool = ENVIRONMENT == "development"
-    
-    # Removed CORS settings for direct API access
+
+    # CORS Settings
+    CORS_ORIGINS: Optional[str] = os.getenv("CORS_ORIGINS", None)
     
     # Database Settings
     DB_HOST: str = os.getenv("DB_HOST", "localhost")
