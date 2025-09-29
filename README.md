@@ -1,33 +1,26 @@
-# DebtEase
+# Debtease Backend - AI-Powered Debt Management API
 
-DebtEase is a smart, mobile-first financial wellness app tailored for the Indian market, helping users **manage debts** and **grow wealth** through AI-driven guidance, gamification, and secure integrations. It aggregates financial data from banks, credit institutions, and investment accounts, providing personalized repayment and wealth-building strategies. The current focus is on building the AI-agent server to power intelligent financial recommendations.
+The Debtease backend is a robust, AI-driven API server that powers intelligent debt management and financial wellness features. Built with FastAPI and Python, it provides the core intelligence behind personalized debt analysis, repayment optimization, and financial coaching.
 
 ## 🌟 Features
 
-- **User Onboarding & KYC**: RBI-compliant eKYC with PAN/Aadhaar verification via DigiLocker, XML, or QR, with consent capture for Account Aggregator (AA).
-- **Debt Management**:
-  - Aggregates loan and credit data (banks, NBFCs, credit cards, BNPL, gold loans) via AA.
-  - EMI dashboard with real-time status (Paid, Upcoming, Overdue).
-  - Manual debt entry for personal or family loans.
-  - AI-powered repayment plans (Snowball/Avalanche) with interest savings forecasts and DPD/bouncing risk alerts.
-  - Gamified experience with debt-free streaks, milestone celebrations, leaderboards, and daily nudges.
-- **Wealth Management**:
-  - Aggregates assets (mutual funds, stocks, FDs, gold, insurance, EPF) via BSEStar, MF Central, or broker APIs (Zerodha, Groww).
-  - Net worth calculation with graphical trends and high debt-to-net-worth ratio alerts.
-  - Goal planning for major life events (home, car, wedding, education) with auto-suggestions.
-  - Smart alerts for SIPs, insurance premiums, and portfolio rebalancing.
-- **AI-Driven Insights**: Analyzes spending vs. debt, identifies high-interest burdens, suggests debt consolidation, and provides budgeting recommendations.
-- **Security & Compliance**: AES-256 encryption, TLS for data in transit, India-based cloud hosting (Mumbai), and RBI/UIDAI-compliant KYC and consent withdrawal.
-- **Advanced Metrics**: Tracks DTI, credit utilization, EMI-to-income ratio, DPD, CEI, net worth growth, and portfolio diversification score.
-- **Admin Dashboard**: Tracks user performance, behavior segmentation, cohort stats, and onboarding funnel metrics.
+- **AI-Powered Debt Analysis**: Advanced algorithms that analyze debt patterns and provide personalized insights using machine learning models.
+- **Intelligent Repayment Strategies**: Automated optimization using Snowball, Avalanche, and hybrid approaches to minimize interest and accelerate debt freedom.
+- **Smart Payment Scheduling**: Dynamic payment plans that adapt to user's financial situation and cash flow patterns.
+- **Financial Goal Planning**: AI-assisted goal setting and progress tracking for major life events and financial milestones.
+- **Real-time Notifications**: Intelligent alerts for payment deadlines, goal achievements, and financial opportunities.
+- **Comprehensive Analytics**: Visual dashboards with spending analysis, debt progression tracking, and financial health metrics.
+- **Gamification Elements**: Achievement systems, progress celebrations, and motivational nudges to maintain user engagement.
+- **Secure Authentication**: JWT-based user authentication with role-based access control and secure session management.
+- **API-First Architecture**: RESTful APIs designed for scalability and integration with frontend applications and third-party services.
 
 ## 🚀 Unique Value Proposition (USP)
 
-1. 🇮🇳 Tailored for the Indian financial ecosystem.
-2. 🎮 Gamified approach to debt repayment and wealth management.
-3. 🔄 Real-time debt and asset sync via Account Aggregator.
-4. 🧠 Intelligent nudges for stress-free financial planning.
-5. 🏛️ RBI-compliant from day one.
+1. 🤖 **AI-First Approach**: Advanced machine learning algorithms for personalized financial guidance
+2. 🎮 **Gamified Experience**: Engaging debt repayment journey with achievements and celebrations
+3. 🔄 **Real-time Intelligence**: Dynamic adaptation to user's changing financial situation
+4. 🧠 **Behavioral Coaching**: Psychology-based nudges for sustainable financial habits
+5. 📊 **Comprehensive Analytics**: Deep insights into spending patterns and financial health
 
 ## 📦 Monetization
 
@@ -40,12 +33,12 @@ DebtEase is a smart, mobile-first financial wellness app tailored for the Indian
 
 | Component            | Technology                                    |
 |----------------------|-----------------------------------------------|
-| **Mobile App**       | Flutter or React Native                       |
-| **AI-Agent Server**  | FastAPI (Python)                              |
-| **AI Engine**        | Python (Sklearn, XGBoost, LangGraph, OpenAI) |
-| **Database**         | Supabase PostgreSQL (user, KYC, payments), MongoDB (statements, assets), pgvector (AI embeddings) |
-| **AA Integration**   | Sahamati FIU APIs                            |
-| **KYC**              | UIDAI offline Aadhaar, NSDL PAN APIs          |
+| **Backend Framework**| FastAPI (Python) with async/await support    |
+| **AI Engine**        | LangGraph, OpenAI, Scikit-learn, XGBoost     |
+| **Database**         | Supabase PostgreSQL with vector extensions   |
+| **Authentication**   | JWT tokens with OAuth2 integration            |
+| **API Documentation**| Auto-generated OpenAPI/Swagger docs          |
+| **Deployment**       | Docker containerization, Render hosting      |
 
 ### AI Components
 - **DebtAnalyzerAgent**: Analyzes debt patterns and provides insights.
@@ -55,107 +48,142 @@ DebtEase is a smart, mobile-first financial wellness app tailored for the Indian
 ## 📂 Project Structure
 
 ```
-DebtEase/
-├── ai-agent-server/
+server/
+├── app/
 │   ├── main.py                        # FastAPI application entry point
 │   ├── config.py                      # Configuration settings
 │   ├── database.py                    # Supabase database client
 │   ├── dependencies.py                # FastAPI dependencies
-│   ├── routes/                        # API endpoints
-│   │   ├── auth.py                    # User authentication and KYC
+│   ├── middleware/                    # Authentication and CORS middleware
+│   ├── routes/                        # API endpoint definitions
+│   │   ├── auth.py                    # User authentication endpoints
 │   │   ├── debts.py                   # Debt management endpoints
-│   │   ├── repayment_plans.py         # AI-driven repayment plans
-│   │   ├── notifications.py           # Payment and goal reminders
-│   │   ├── wealth.py                  # Wealth management endpoints
-│   ├── models/                        # Data models
-│   │   ├── user.py
-│   │   ├── debt.py
-│   │   ├── payment.py
-│   │   ├── repayment_plan.py
-│   │   ├── asset.py
-│   └── ai_module/                     # AI agent system
-│       ├── agent_base.py              # Base agent class
-│       ├── debt_analyzer_agent.py     # Financial analysis agent
-│       ├── debt_optimizer_agent.py    # Optimization agent
-│       ├── orchestrator.py            # LangGraph workflow
-│   ├── tests/                         # Unit and integration tests
-│   │   ├── test_routes/
-│   │   ├── test_ai_module/
-│   │   ├── test_services/
-│   ├── requirements.txt               # Python dependencies
-│   └── Dockerfile                     # AI-agent server container config
-├── frontend/                          # Mobile app (Flutter/React Native)
-└── docs/                              # Documentation
-    ├── architecture.md
-    ├── api.md
-    └── database.md
+│   │   ├── payments.py                # Payment processing endpoints
+│   │   ├── insights.py                # AI insights and analytics
+│   │   └── onboarding.py              # User onboarding flow
+│   ├── models/                        # Database models and schemas
+│   │   ├── user.py                    # User model and schemas
+│   │   ├── debt.py                    # Debt model and schemas
+│   │   ├── payment.py                 # Payment model and schemas
+│   │   └── ai_insights.py             # AI insights model
+│   ├── agents/                        # AI agent implementations
+│   │   ├── __init__.py
+│   │   ├── budget_tracking_agent/     # Budget analysis agents
+│   │   ├── debt_optimizer_agent/      # Debt optimization agents
+│   │   └── wealth_management_agent/   # Wealth building agents
+│   ├── repositories/                  # Data access layer
+│   │   ├── user_repository.py
+│   │   ├── debt_repository.py
+│   │   ├── payment_repository.py
+│   │   └── analytics_repository.py
+│   ├── services/                      # Business logic services
+│   │   ├── auth_service.py
+│   │   ├── debt_service.py
+│   │   ├── payment_service.py
+│   │   └── ai_service.py
+│   └── utils/                         # Utility functions and helpers
+├── alembic/                           # Database migration management
+├── test/                              # Test suite and fixtures
+├── requirements.txt                   # Python dependencies
+├── pyproject.toml                     # Project configuration
+└── run_migrations.py                  # Database migration runner
 ```
 
-## 🔐 Security & Compliance
+## 🔐 Security & Privacy
 
 | Area                  | Implementation                              |
 |-----------------------|---------------------------------------------|
-| **KYC & Consent**     | RBI/UIDAI-compliant eKYC and consent        |
-| **Account Aggregator**| Sahamati FIU integration                   |
-| **Data Hosting**      | India-based cloud (Mumbai region)          |
-| **Encryption**        | AES-256 (at rest), TLS (in-transit)        |
-| **Consent Withdrawal**| Users can revoke access anytime            |
-| **Database Security** | Row-Level Security (RLS), user auth        |
+| **Authentication**    | JWT-based auth with secure session management|
+| **Data Encryption**   | AES-256 encryption for sensitive data        |
+| **API Security**      | Rate limiting, CORS protection             |
+| **Database Security**| Row-Level Security (RLS) with Supabase      |
+| **HTTPS Only**        | TLS encryption for all data in transit     |
+| **Privacy First**     | User consent management and data minimization|
 
-## 📈 Metrics Tracked
+## 📈 Key Metrics & Analytics
 
-- Debt-to-Income Ratio (DTI)
-- Credit Utilization Rate
-- EMI-to-Income %
-- Days Past Due (DPD)
-- Collection Effectiveness Index (CEI)
-- Net Worth Growth Rate
-- Portfolio Diversification Score
+- **Debt-to-Income Ratio (DTI)**: Financial health indicator
+- **Payment Consistency**: Track on-time payment patterns
+- **Interest Savings**: Monitor progress toward debt freedom
+- **Goal Achievement Rate**: Success rate for financial milestones
+- **Engagement Metrics**: User activity and feature utilization
+- **Risk Assessment**: Early warning indicators for financial stress
 
 ## 🛠️ Getting Started
 
 ### Prerequisites
-- Python 3.11
-- Node.js 14+
-- Flutter or React Native (for frontend)
-- Docker and Docker Compose (optional)
+- **Python 3.11+** for the backend server
+- **Git** for version control
+- **Virtual environment** tool (venv, virtualenv, or conda)
 
-### Installation
-1. Clone the repository:
-   ```
-   git clone git@github.com:MihirsinhChauhan/DebtEase.git
-   cd DebtEase
+### Backend Setup
+
+1. **Navigate to the server directory**
+   ```bash
+   cd server
    ```
 
-2. Set up the AI-agent server:
-   ```
-   cd ai-agent-server
+2. **Create a virtual environment**
+   ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install dependencies**
+   ```bash
    pip install -r requirements.txt
    ```
 
-3. Set up the frontend:
-   ```
-   cd ../frontend
-   npm install  # or flutter pub get
-   ```
-
-### Running the Application
-1. Start the AI-agent server:
-   ```
-   cd ai-agent-server
-   uvicorn main:app --reload
+4. **Set up environment variables**
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
    ```
 
-2. Start the frontend:
-   ```
-   cd frontend
-   npm start  # or flutter run
+5. **Run database migrations**
+   ```bash
+   python run_migrations.py
    ```
 
-## 📚 API Documentation
-Available at `/docs` when the AI-agent server is running.
+6. **Start the development server**
+   ```bash
+   uvicorn app.main:app --reload
+   ```
 
-## 👥 Contributors
-- [Your Name] - AI-Agent Server, AI, and Mobile App
+### API Documentation
+Once the server is running, visit:
+- **API Docs**: http://localhost:8000/docs (Swagger UI)
+- **Alternative Docs**: http://localhost:8000/redoc (ReDoc)
+
+### Testing
+Run the test suite:
+```bash
+pytest
+```
+
+## 🤝 Contributing
+
+We welcome contributions to the Debtease backend! Here's how to get involved:
+
+1. **Fork** the repository and create a feature branch
+2. **Write tests** for new functionality
+3. **Follow PEP 8** style guidelines for Python code
+4. **Update documentation** for API changes
+5. **Submit a pull request** with a clear description
+
+### Development Guidelines
+- Use type hints for all function signatures
+- Write comprehensive docstrings
+- Implement proper error handling
+- Add tests for new endpoints and features
+- Ensure all tests pass before submitting PRs
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+## 📚 Additional Resources
+
+- **[Main Project README](../README.md)** - Complete project overview
+- **[Frontend Documentation](../client/README.md)** - Client-side development guide
+- **[API Documentation](./docs/)** - Detailed API reference (when available)
